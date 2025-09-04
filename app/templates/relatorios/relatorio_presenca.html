@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-g">
+    <title>Relatório de Presença</title>
+    <style>
+        body { font-family: sans-serif; margin: 2cm; }
+        h1 { text-align: center; color: #333; }
+        .info { margin-bottom: 20px; border: 1px solid #ddd; padding: 15px; border-radius: 5px; }
+        .info p { margin: 5px 0; }
+        table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+        th, td { border: 1px solid #ccc; padding: 8px; text-align: left; }
+        th { background-color: #f2f2f2; font-weight: bold; }
+        .footer { text-align: center; font-size: 10px; color: #777; position: fixed; bottom: -1cm; left: 0; right: 0; }
+        .presente { color: green; }
+        .ausente { color: red; }
+        .justificado { color: blue; }
+    </style>
+</head>
+<body>
+    <div class="footer">
+        Gerado em: {{ data_geracao.strftime('%d/%m/%Y %H:%M:%S') }}
+    </div>
+
+    <h1>Relatório de Presença</h1>
+
+    <div class="info">
+        <p><strong>Esporte:</strong> {{ dados.esporte.nome }}</p>
+        <p><strong>Turma:</strong> {{ dados.turma_nome }}</p>
+        <p><strong>Professor:</strong> {{ dados.professor.nome_completo }}</p>
+        <p><strong>Data da Aula:</strong> {{ dados.data.strftime('%d/%m/%Y') }}</p>
+    </div>
+
+    <table>
+        <thead>
+            <tr>
+                <th>Nome do Aluno</th>
+                <th>Status da Presença</th>
+                <th>Observação</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for aluno in dados.alunos|sort(attribute='nome_completo') %}
+            <tr>
+                <td>{{ aluno.nome_completo }}</td>
+                <td class="{{ aluno.presenca.status }}">
+                    {% if aluno.presenca.status == 'presente' %}Presente
+                    {% elif aluno.presenca.status == 'ausente' %}Ausente
+                    {% elif aluno.presenca.status == 'justificado' %}Justificado
+                    {% else %}Pendente
+                    {% endif %}
+                </td>
+                <td>{{ aluno.presenca.observacao or '' }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</body>
+</html>

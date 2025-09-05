@@ -35,14 +35,15 @@ def obter_perfil_pessoal():
 @admin_required()
 def criar_novo_usuario():
     """
-    [ADMIN] Cria um novo usuário (professor, aluno, etc.).
+    [ADMIN] Cria um novo usuário (professor, aluno, ou outro admin).
     """
     dados = request.get_json()
     if not dados or not all(k in dados for k in ('nome_completo', 'email', 'senha', 'data_nascimento', 'perfil')):
         return jsonify({"mensagem": "Dados incompletos."}), 400
 
-    if dados['perfil'] == 'admin':
-        return jsonify({"mensagem": "Não é permitido criar outro admin por esta rota."}), 403
+    # A verificação que impedia a criação de admins foi removida.
+    # Como a rota já é protegida por @admin_required(), garantimos
+    # que apenas um admin logado pode criar qualquer tipo de usuário.
 
     try:
         usuario_id = usuario_service.criar_usuario(dados)
@@ -60,9 +61,23 @@ def criar_novo_usuario():
 @admin_required()
 def obter_todos_usuarios():
     """
-    [ADMIN] Lista todos os usuários do sistema.
+    [ADMIN] Lista todos os usuários do sistema, com suporte a filtros.
+    Ex: /api/usuarios?perfil=aluno
+    Ex: /api/usuarios?status_pagamento=pendente
     """
-    usuarios = usuario_service.listar_usuarios()
+    filtros = {}
+    
+    # Lógica para o filtro de perfil (já existente)
+    perfil_query = request.args.get('perfil')
+    if perfil_query:
+        filtros['perfil'] = perfil_query
+
+    # Adiciona a lógica para ler o novo parâmetro da URL.
+    pagamento_query = request.args.get('status_pagamento')
+    if pagamento_query:
+        filtros['status_pagamento'] = pagamento_query
+
+    usuarios = usuario_service.listar_usuarios(filtros)
     usuarios_formatados = [formatar_usuario(u) for u in usuarios]
     return jsonify(usuarios_formatados), 200
 
@@ -122,3 +137,4 @@ def definir_status_pagamento(usuario_id):
             return jsonify({"mensagem": "Nenhuma alteração realizada ou usuário não encontrado."}), 404
     except ValueError as e:
         return jsonify({"mensagem": str(e)}), 400
+

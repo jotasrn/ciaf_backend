@@ -24,9 +24,9 @@ def criar_nova_turma():
     Exige nome, ID do professor e ID do esporte.
     """
     dados = request.get_json()
-    # Validação atualizada para incluir o esporte_id como obrigatório
-    if not dados or not all(k in dados for k in ('nome', 'professor_id', 'esporte_id')):
-        return jsonify({"mensagem": "Os campos nome, professor_id e esporte_id são obrigatórios."}), 400
+    # Validação atualizada para incluir a categoria como obrigatória
+    if not dados or not all(k in dados for k in ('nome', 'professor_id', 'esporte_id', 'categoria')):
+        return jsonify({"mensagem": "Nome, professor_id, esporte_id e categoria são obrigatórios."}), 400
     
     try:
         turma_id = turma_service.criar_turma(dados)

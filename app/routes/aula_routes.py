@@ -1,9 +1,11 @@
 from flask import Blueprint, request, jsonify, send_file
 from app.decorators.auth_decorators import role_required, admin_required
 from app.services import aula_service, export_service
-from app import mongo
+from app import mongo, timezone
 from bson import ObjectId, json_util
 from flask_jwt_extended import get_jwt_identity, get_jwt
+import datetime
+import json
 
 # Cria o Blueprint para as rotas de aula
 aula_bp = Blueprint('aula_bp', __name__)
@@ -67,6 +69,31 @@ def get_aulas_por_turma(turma_id):
     
     aulas = aula_service.listar_aulas_por_turma(turma_id)
     return bson_response(aulas)
+
+
+@aula_bp.route('/por-data', methods=['GET'])
+@admin_required()
+def get_aulas_do_dia():
+    """
+    [ADMIN] Retorna as aulas de um dia específico.
+    A data é passada como parâmetro, ex: ?data=2025-09-05
+    Se nenhuma data for passada, usa o dia atual.
+    """
+    data_str = request.args.get('data')
+    
+    if data_str:
+        try:
+            data_filtro = datetime.datetime.fromisoformat(data_str)
+        except ValueError:
+            return jsonify({"mensagem": "Formato de data inválido. Use AAAA-MM-DD."}), 400
+    else:
+        # Usa o timezone que configuramos para pegar a data atual corretamente
+        data_filtro = datetime.datetime.now(timezone)
+
+    aulas = aula_service.listar_aulas_por_data(data_filtro)
+    
+    # É preciso converter o resultado do aggregate (que pode ter ObjectId) para JSON
+    return json.loads(json_util.dumps(aulas)), 200
 
 
 @aula_bp.route('/<string:aula_id>/detalhes', methods=['GET'])

@@ -46,6 +46,7 @@ def criar_turma(dados_turma):
     nova_turma = {
         "nome": dados_turma['nome'],
         "esporte_id": esporte_id,
+        "categoria": dados_turma.get('categoria', 'Geral'), # Adiciona o novo campo
         "descricao": dados_turma.get('descricao', ''),
         "professor_id": ObjectId(professor_id),
         "alunos_ids": [ObjectId(aid) for aid in alunos_ids],
@@ -98,6 +99,7 @@ def _get_aggregation_pipeline(turma_id=None):
                 "nome": 1,
                 "descricao": 1,
                 "horarios": 1,
+                "categoria": 1,
                 # $arrayElemAt pega o primeiro (e único) elemento do array retornado pelo $lookup
                 "esporte": {"$arrayElemAt": ["$esporte_info", 0]},
                 "professor": {"$arrayElemAt": ["$professor_info", 0]},
@@ -110,6 +112,7 @@ def _get_aggregation_pipeline(turma_id=None):
                 "nome": 1,
                 "descricao": 1,
                 "horarios": 1,
+                "categoria": 1,
                 "esporte._id": 1,
                 "esporte.nome": 1,
                 "professor._id": 1,
@@ -153,7 +156,7 @@ def atualizar_turma(turma_id, dados_atualizacao):
     update_fields = {}
     
     # Adiciona campos permitidos para atualização
-    campos_permitidos = ['nome', 'descricao', 'horarios']
+    campos_permitidos = ['nome', 'descricao', 'horarios', 'categoria']
     for campo in campos_permitidos:
         if campo in dados_atualizacao:
             update_fields[campo] = dados_atualizacao[campo]
@@ -165,7 +168,7 @@ def atualizar_turma(turma_id, dados_atualizacao):
     if 'esporte_id' in dados_atualizacao:
         esporte_obj_id = ObjectId(dados_atualizacao['esporte_id'])
         if not mongo.db.esportes.find_one({"_id": esporte_obj_id}):
-             raise ValueError("Esporte com o ID fornecido não encontrado.")
+                raise ValueError("Esporte com o ID fornecido não encontrado.")
         update_fields['esporte_id'] = esporte_obj_id
 
     if not update_fields:

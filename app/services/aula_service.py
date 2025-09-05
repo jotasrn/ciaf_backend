@@ -40,7 +40,7 @@ def buscar_detalhes_aula(aula_id):
         {"$lookup": {"from": "usuarios", "localField": "turma.alunos_ids", "foreignField": "_id", "as": "alunos"}},
         # 3. Obter os registros de presença para esta aula
         {"$lookup": {"from": "presencas", "localField": "_id", "foreignField": "aula_id", "as": "registros_presenca"}},
-        # 4. Projetar e mesclar os dados (ESTÁGIO MODIFICADO)
+        # 4. Projetar e mesclar os dados
         {
             "$project": {
                 "data": 1, "status": 1, "observacoes": 1, "turma_id": 1,
@@ -111,3 +111,54 @@ def marcar_presenca_lote(aula_id, lista_presencas):
     mongo.db.aulas.update_one({"_id": aula_obj_id}, {"$set": {"status": "realizada"}})
     
     return resultado.upserted_count + resultado.modified_count
+
+def listar_aulas_por_data(data_filtro):
+    """
+    Lista todas as aulas de uma data específica com dados agregados da turma e presença.
+    """
+    # Define o início e o fim do dia para a consulta
+    inicio_dia = datetime.datetime.combine(data_filtro.date(), datetime.time.min)
+    fim_dia = datetime.datetime.combine(data_filtro.date(), datetime.time.max)
+
+    pipeline = [
+        {
+            "$match": {
+                "data": {"$gte": inicio_dia, "$lte": fim_dia}
+            }
+        },
+        {
+            "$lookup": {"from": "turmas", "localField": "turma_id", "foreignField": "_id", "as": "turma"}
+        },
+        {"$unwind": "$turma"},
+        {
+            "$lookup": {"from": "esportes", "localField": "turma.esporte_id", "foreignField": "_id", "as": "esporte"}
+        },
+        {"$unwind": "$esporte"},
+        {
+            "$lookup": {
+                "from": "presencas",
+                "localField": "_id",
+                "foreignField": "aula_id",
+                "as": "presencas"
+            }
+        },
+        {
+            "$project": {
+                "data": 1,
+                "status": 1,
+                "turma_nome": "$turma.nome",
+                "esporte_nome": "$esporte.nome",
+                "total_alunos_na_turma": {"$size": "$turma.alunos_ids"},
+                "total_presentes": {
+                    "$size": {
+                        "$filter": {
+                            "input": "$presencas",
+                            "as": "presenca",
+                            "cond": {"$eq": ["$$presenca.status", "presente"]}
+                        }
+                    }
+                }
+            }
+        }
+    ]
+    return list(mongo.db.aulas.aggregate(pipeline))

@@ -52,12 +52,22 @@ def verificar_senha(senha_hash, senha_fornecida):
     """
     return bcrypt.checkpw(senha_fornecida.encode('utf-8'), senha_hash.encode('utf-8'))
 
-def listar_usuarios():
+def listar_usuarios(filtros=None):
     """
-    Retorna uma lista de todos os usuários, sem o hash da senha.
+    Retorna uma lista de todos os usuários, com suporte a filtros.
+    Sem o hash da senha.
     """
-    # A projeção {"senha_hash": 0} exclui o campo da senha dos resultados.
-    return list(mongo.db.usuarios.find({}, {"senha_hash": 0}))
+    query = {}
+    if filtros:
+        if 'perfil' in filtros:
+            query['perfil'] = filtros['perfil']
+        
+        # Adiciona a lógica para o novo filtro de status de pagamento.
+        # Note que acessamos o campo aninhado com a "dot notation" do MongoDB.
+        if 'status_pagamento' in filtros:
+            query['status_pagamento.status'] = filtros['status_pagamento']
+    
+    return list(mongo.db.usuarios.find(query, {"senha_hash": 0}))
 
 def encontrar_usuario_por_id(usuario_id):
     """
@@ -140,3 +150,4 @@ def atualizar_status_pagamento(usuario_id, dados_pagamento):
         {"$set": update_fields}
     )
     return resultado.modified_count
+

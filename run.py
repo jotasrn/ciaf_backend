@@ -13,6 +13,6 @@ if __name__ == '__main__':
 #python run.py
 
 # "email": "admin@escolinha.com",
-# "senha": "senhaSuperForte123",
+# "senha": "senhaSuperForte123", km
 
-#erro de venv deactivate, rm -r venv, python -m venv venv, .\venv\Scripts\Activate.ps1, pip install -r requirements.txt, python run.py
+#venv deactivate, rm -r venv, python -m venv venv, .\venv\Scripts\Activate.ps1, pip install -r requirements.txt, python run.py

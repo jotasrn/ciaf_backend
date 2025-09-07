@@ -162,3 +162,25 @@ def listar_aulas_por_data(data_filtro):
         }
     ]
     return list(mongo.db.aulas.aggregate(pipeline))
+
+def listar_turmas_filtradas(filtros):
+    """
+    Lista turmas com base em filtros de esporte e categoria.
+    """
+    query = {}
+    if 'esporte_id' in filtros:
+        query['esporte_id'] = ObjectId(filtros['esporte_id'])
+    if 'categoria' in filtros:
+        query['categoria'] = filtros['categoria']
+        
+    # Usamos o pipeline para popular os dados do professor, como na listagem geral
+    pipeline = [
+        {"$match": query},
+        # Adicione os estágios de $lookup e $project do _get_aggregation_pipeline aqui
+        # para retornar os dados completos da turma.
+        # (Para ser breve, omitido aqui, mas copie os estágios de _get_aggregation_pipeline)
+    ]
+
+    # Temporariamente, uma busca mais simples para validar a lógica:
+    turmas = list(mongo.db.turmas.find(query))
+    return turmas

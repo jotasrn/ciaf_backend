@@ -1,53 +1,40 @@
-from flask import Blueprint, request, jsonify, send_file
+from flask import Blueprint, request, jsonify
 from app.decorators.auth_decorators import role_required, admin_required
-from app.services import aula_service, export_service
+from app.services import aula_service
 from app import mongo, timezone
 from bson import ObjectId, json_util
 from flask_jwt_extended import get_jwt_identity, get_jwt
 import datetime
 import json
 
-# Cria o Blueprint para as rotas de aula
-aula_bp = Blueprint('aula_bp', __name__)
 
-def bson_response(data, status_code=200):
-    """
-    Cria uma resposta Flask a partir de dados que podem conter tipos BSON,
-    convertendo-os para JSON padrão.
-    """
-    return jsonify(json_util.loads(json_util.dumps(data))), status_code
+# Garante que o Blueprint está definido corretamente
+aula_bp = Blueprint('aula_bp', __name__)
 
 def _verificar_permissao_professor(turma_id):
     """
-    Função auxiliar de segurança.
     Verifica se o usuário logado é o professor da turma ou um admin.
     Retorna True se tiver permissão, False caso contrário.
     """
     claims = get_jwt()
-    # Admin pode tudo, então a verificação é dispensada.
     if claims.get("perfil") == "admin":
         return True
 
     turma = mongo.db.turmas.find_one({"_id": ObjectId(turma_id)})
     if not turma:
-        return False # Turma não existe
+        return False
         
     id_professor_logado = get_jwt_identity()
-    # Compara o ID do professor logado (do token) com o professor_id da turma.
     return str(turma.get('professor_id')) == id_professor_logado
 
 
 @aula_bp.route('/', methods=['POST'])
 @role_required(roles=['admin', 'professor'])
 def agendar_aula():
-    """
-    [ADMIN, PROFESSOR] Endpoint para agendar uma nova aula.
-    """
     dados = request.get_json()
     if not dados or not all(k in dados for k in ('turma_id', 'data')):
-        return jsonify({"mensagem": "Os campos turma_id e data são obrigatórios."}), 400
+        return jsonify({"mensagem": "turma_id e data são obrigatórios."}), 400
 
-    # Verificação de posse: o professor só pode criar aula para sua própria turma.
     if not _verificar_permissao_professor(dados['turma_id']):
         return jsonify({"mensagem": "Acesso negado: você não é o professor desta turma."}), 403
 
@@ -60,24 +47,52 @@ def agendar_aula():
 @aula_bp.route('/turma/<string:turma_id>', methods=['GET'])
 @role_required(roles=['admin', 'professor'])
 def get_aulas_por_turma(turma_id):
-    """
-    [ADMIN, PROFESSOR] Endpoint para listar as aulas de uma turma específica.
-    """
-    # Verificação de posse: o professor só pode listar aulas da sua própria turma.
     if not _verificar_permissao_professor(turma_id):
         return jsonify({"mensagem": "Acesso negado."}), 403
     
     aulas = aula_service.listar_aulas_por_turma(turma_id)
-    return bson_response(aulas)
+    return json.loads(json_util.dumps(aulas)), 200
 
+
+@aula_bp.route('/<string:aula_id>/detalhes', methods=['GET'])
+@role_required(roles=['admin', 'professor'])
+def get_detalhes_aula(aula_id):
+    aula = mongo.db.aulas.find_one({"_id": ObjectId(aula_id)})
+    if not aula:
+        return jsonify({"mensagem": "Aula não encontrada."}), 404
+
+    if not _verificar_permissao_professor(str(aula.get('turma_id'))):
+        return jsonify({"mensagem": "Acesso negado."}), 403
+        
+    detalhes = aula_service.buscar_detalhes_aula(aula_id)
+    return json.loads(json_util.dumps(detalhes)), 200
+
+
+@aula_bp.route('/<string:aula_id>/presencas', methods=['POST'])
+@role_required(roles=['admin', 'professor'])
+def registrar_presencas(aula_id):
+    aula = mongo.db.aulas.find_one({"_id": ObjectId(aula_id)})
+    if not aula:
+        return jsonify({"mensagem": "Aula não encontrada."}), 404
+
+    if not _verificar_permissao_professor(str(aula.get('turma_id'))):
+        return jsonify({"mensagem": "Acesso negado: você não pode registrar presenças para esta turma."}), 403
+
+    lista_presencas = request.get_json()
+    if not isinstance(lista_presencas, list):
+        return jsonify({"mensagem": "O corpo da requisição deve ser uma lista de presenças."}), 400
+
+    try:
+        total_modificado = aula_service.marcar_presenca_lote(aula_id, lista_presencas)
+        return jsonify({"mensagem": f"Presença registrada para {total_modificado} aluno(s).", "aula_status": "realizada"}), 200
+    except Exception as e:
+        return jsonify({"mensagem": "Erro ao registrar presença.", "detalhes": str(e)}), 500
 
 @aula_bp.route('/por-data', methods=['GET'])
 @admin_required()
 def get_aulas_do_dia():
     """
     [ADMIN] Retorna as aulas de um dia específico.
-    A data é passada como parâmetro, ex: ?data=2025-09-05
-    Se nenhuma data for passada, usa o dia atual.
     """
     data_str = request.args.get('data')
     
@@ -87,94 +102,7 @@ def get_aulas_do_dia():
         except ValueError:
             return jsonify({"mensagem": "Formato de data inválido. Use AAAA-MM-DD."}), 400
     else:
-        # Usa o timezone que configuramos para pegar a data atual corretamente
         data_filtro = datetime.datetime.now(timezone)
 
     aulas = aula_service.listar_aulas_por_data(data_filtro)
-    
-    # É preciso converter o resultado do aggregate (que pode ter ObjectId) para JSON
     return json.loads(json_util.dumps(aulas)), 200
-
-
-@aula_bp.route('/<string:aula_id>/detalhes', methods=['GET'])
-@role_required(roles=['admin', 'professor'])
-def get_detalhes_aula(aula_id):
-    """
-    [ADMIN, PROFESSOR] Endpoint para obter os detalhes de uma aula, incluindo a lista de presença.
-    """
-    try:
-        aula = mongo.db.aulas.find_one({"_id": ObjectId(aula_id)})
-    except Exception:
-        return jsonify({"mensagem": "ID de aula inválido."}), 400
-        
-    if not aula:
-        return jsonify({"mensagem": "Aula não encontrada."}), 404
-
-    # Verificação de posse: o professor só pode ver detalhes de aulas da sua própria turma.
-    if not _verificar_permissao_professor(str(aula.get('turma_id'))):
-        return jsonify({"mensagem": "Acesso negado."}), 403
-        
-    detalhes = aula_service.buscar_detalhes_aula(aula_id)
-    return bson_response(detalhes)
-
-
-@aula_bp.route('/<string:aula_id>/presencas', methods=['POST'])
-@role_required(roles=['admin', 'professor'])
-def registrar_presencas(aula_id):
-    """
-    [ADMIN, PROFESSOR] Endpoint para registrar a chamada (lista de presença) de uma aula.
-    """
-    try:
-        aula = mongo.db.aulas.find_one({"_id": ObjectId(aula_id)})
-    except Exception:
-        return jsonify({"mensagem": "ID de aula inválido."}), 400
-        
-    if not aula:
-        return jsonify({"mensagem": "Aula não encontrada."}), 404
-
-    # Verificação de posse: o professor só pode registrar presença em aulas da sua própria turma.
-    if not _verificar_permissao_professor(str(aula.get('turma_id'))):
-        return jsonify({"mensagem": "Acesso negado: você não pode registrar presenças para esta turma."}), 403
-
-    lista_presencas = request.get_json()
-    if not isinstance(lista_presencas, list):
-        return jsonify({"mensagem": "O corpo da requisição deve ser uma lista (array) de presenças."}), 400
-
-    try:
-        total_modificado = aula_service.marcar_presenca_lote(aula_id, lista_presencas)
-        return jsonify({"mensagem": f"Presença registrada para {total_modificado} aluno(s).", "aula_status": "realizada"}), 200
-    except Exception as e:
-        return jsonify({"mensagem": "Erro ao registrar presença.", "detalhes": str(e)}), 500
-        
-@aula_bp.route('/<string:aula_id>/exportar', methods=['GET'])
-@admin_required()
-def exportar_presenca(aula_id):
-    """
-    [ADMIN] Endpoint para exportar a lista de presença.
-    Use o parâmetro de query ?formato=xlsx ou ?formato=pdf
-    """
-    formato = request.args.get('formato', 'pdf').lower()
-
-    try:
-        if formato == 'xlsx':
-            file_stream, nome_arquivo = export_service.gerar_planilha_presenca_aula(aula_id)
-            mimetype = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-        elif formato == 'pdf':
-            file_stream, nome_arquivo = export_service.gerar_pdf_presenca_aula(aula_id)
-            mimetype = 'application/pdf'
-        else:
-            return jsonify({"mensagem": "Formato de exportação inválido. Use 'xlsx' ou 'pdf'."}), 400
-
-        if not file_stream:
-            return jsonify({"mensagem": "Aula não encontrada ou sem dados para exportar."}), 404
-
-        return send_file(
-            file_stream,
-            as_attachment=True,
-            download_name=nome_arquivo,
-            mimetype=mimetype
-        )
-    except Exception as e:
-        # Em um sistema de produção, registraríamos esse erro em um sistema de log.
-        print(f"Erro ao gerar planilha para aula {aula_id}: {e}")
-        return jsonify({"mensagem": "Ocorreu um erro interno ao gerar a planilha."}), 500

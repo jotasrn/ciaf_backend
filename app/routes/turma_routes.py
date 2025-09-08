@@ -3,36 +3,51 @@ from app.services import turma_service
 from app.decorators.auth_decorators import admin_required
 from bson import ObjectId, json_util
 import json
+import traceback
 from app import mongo
 
 # Cria o Blueprint para as rotas de turma
 turma_bp = Blueprint('turma_bp', __name__)
+
+@turma_bp.before_request
+def handle_turma_preflight():
+    """
+    Responde às requisições OPTIONS (CORS pre-flight) antes que elas
+    cheguem aos decorators de autenticação, evitando o erro de JWT.
+    """
+    if request.method.upper() == 'OPTIONS':
+        # O flask-cors adicionará os cabeçalhos corretos.
+        # Nós apenas precisamos retornar uma resposta vazia e bem-sucedida.
+        return '', 204
+
 
 @turma_bp.route('/', methods=['POST'])
 @admin_required()
 def criar_nova_turma():
     """
     [ADMIN] Endpoint para criar uma nova turma.
-    Exige nome, professor_id, esporte_id e categoria.
     """
     dados = request.get_json()
+    print(f"DEBUG: Dados recebidos para criar turma: {dados}")
+
     if not dados or not all(k in dados for k in ('nome', 'professor_id', 'esporte_id', 'categoria')):
         return jsonify({"mensagem": "Nome, professor_id, esporte_id e categoria são obrigatórios."}), 400
     
     try:
         turma_id = turma_service.criar_turma(dados)
-        return jsonify({"mensagem": "Turma criada com sucesso!", "turma_id": turma_id}), 201
-    except ValueError as e:
-        return jsonify({"mensagem": str(e)}), 400
+        return jsonify({"mensagem": "Turma criada com sucesso!", "turma_id": str(turma_id)}), 201
     except Exception as e:
-        return jsonify({"mensagem": "Erro interno no servidor.", "detalhes": str(e)}), 500
+        print(f"!!!!!!!!!! ERRO AO CRIAR TURMA !!!!!!!!!!")
+        print(e)
+        traceback.print_exc()
+        print(f"!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
+        return jsonify({"mensagem": f"Erro interno no servidor: {e}"}), 500
 
 @turma_bp.route('/', methods=['GET'])
 @admin_required()
 def obter_todas_turmas():
     """
     [ADMIN] Lista turmas. Suporta filtro por esporte_id e categoria.
-    Ex: /api/turmas?esporte_id=...&categoria=Sub-11
     """
     filtros = {}
     esporte_id = request.args.get('esporte_id')
@@ -44,10 +59,8 @@ def obter_todas_turmas():
         filtros['categoria'] = categoria
 
     if not filtros:
-        # Se não houver filtros, usa a função de listagem populada que já tínhamos
         turmas = turma_service.listar_turmas()
     else:
-        # Se houver filtros, usa a função de filtragem
         turmas = turma_service.listar_turmas_filtradas(filtros)
         
     return json.loads(json_util.dumps(turmas)), 200

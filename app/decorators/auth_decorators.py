@@ -1,36 +1,34 @@
+# app/decorators/auth_decorators.py
+
 from functools import wraps
 from flask import jsonify
-from flask_jwt_extended import jwt_required, get_jwt
+from flask_jwt_extended import verify_jwt_in_request, get_jwt
 
 def role_required(roles):
     """
-    Decorator customizado que verifica se o perfil do usuário (lido a partir do token JWT)
-    está na lista de perfis permitidos.
-
-    Este decorator já inclui a verificação de um token válido (@jwt_required).
-    
-    :param roles: Uma lista de strings de perfis permitidos (ex: ['admin', 'professor'])
+    Decorator customizado que verifica o perfil do usuário.
+    Esta versão é robusta e lida corretamente com as requisições OPTIONS do CORS.
     """
     def wrapper(fn):
         @wraps(fn)
-        @jwt_required()  # Garante que um token JWT válido está presente na requisição
         def decorator(*args, **kwargs):
-            # Pega as informações (claims) de dentro do token decodificado
-            claims = get_jwt()
-            user_role = claims.get("perfil")
-
-            # Verifica se o perfil do usuário no token está na lista de perfis permitidos
-            if user_role not in roles:
-                return jsonify({"mensagem": f"Acesso restrito. Perfis permitidos: {', '.join(roles)}."}), 403 # HTTP 403 Forbidden
+            # 1. Verifica se um token JWT válido está presente na requisição.
+            # Esta função é inteligente e não gera erro para requisições OPTIONS.
+            verify_jwt_in_request()
             
-            # Se a verificação passar, executa a função da rota original
+            # 2. Se a verificação passou, pega os dados (claims) do token.
+            claims = get_jwt()
+            
+            # 3. Verifica se o perfil do usuário está na lista de perfis permitidos.
+            user_role = claims.get("perfil")
+            if user_role not in roles:
+                return jsonify({"mensagem": f"Acesso restrito. Perfis permitidos: {', '.join(roles)}."}), 403
+            
+            # 4. Se tudo estiver OK, executa a função da rota original.
             return fn(*args, **kwargs)
         return decorator
     return wrapper
 
 def admin_required():
-    """
-    Um atalho (convenience decorator) para @role_required(roles=['admin']).
-    Use @admin_required() para proteger rotas que só podem ser acessadas por administradores.
-    """
+    """Um atalho para role_required(['admin'])"""
     return role_required(roles=['admin'])

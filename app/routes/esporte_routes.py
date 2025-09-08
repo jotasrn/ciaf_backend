@@ -6,6 +6,11 @@ from bson import json_util
 # Cria o Blueprint para as rotas de esporte
 esporte_bp = Blueprint('esporte_bp', __name__)
 
+@esporte_bp.before_request
+def handle_esporte_preflight():
+    if request.method.upper() == 'OPTIONS':
+        return '', 204
+
 def bson_response(data, status_code=200):
     """
     Cria uma resposta Flask a partir de dados que podem conter tipos BSON,
@@ -85,4 +90,4 @@ def deletar_esporte_existente(esporte_id):
             return jsonify({"mensagem": "Esporte não encontrado."}), 404
     except ValueError as e:
         # Captura o erro do service que impede a exclusão de esporte em uso
-        return jsonify({"mensagem": str(e)}), 400 # Bad Request
+        return jsonify({"mensagem": str(e)}), 400

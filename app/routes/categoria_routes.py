@@ -6,6 +6,11 @@ import json
 
 categoria_bp = Blueprint('categoria_bp', __name__)
 
+@categoria_bp.before_request
+def handle_categoria_preflight():
+    if request.method.upper() == 'OPTIONS':
+        return '', 204
+
 @categoria_bp.route('/<string:esporte_id>', methods=['GET'])
 @admin_required()
 def get_categorias(esporte_id):
@@ -24,4 +29,21 @@ def criar_nova_categoria():
     except ValueError as e:
         return jsonify({"mensagem": str(e)}), 409
 
-# TODO: Implementar rotas PUT e DELETE
+@categoria_bp.route('/<string:categoria_id>', methods=['PUT'])
+@admin_required()
+def atualizar_categoria_existente(categoria_id):
+    dados = request.get_json()
+    try:
+        categoria_service.atualizar_categoria(categoria_id, dados)
+        return jsonify({"mensagem": "Categoria atualizada com sucesso!"}), 200
+    except ValueError as e:
+        return jsonify({"mensagem": str(e)}), 400
+
+@categoria_bp.route('/<string:categoria_id>', methods=['DELETE'])
+@admin_required()
+def deletar_categoria_existente(categoria_id):
+    try:
+        categoria_service.deletar_categoria(categoria_id)
+        return '', 204 # No Content
+    except ValueError as e:
+        return jsonify({"mensagem": str(e)}), 400

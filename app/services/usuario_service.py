@@ -57,7 +57,7 @@ def listar_usuarios(filtros=None):
     Retorna uma lista de todos os usuários, com suporte a filtros.
     Sem o hash da senha.
     """
-    query = {}
+    query = {'ativo': True}
     if filtros:
         if 'perfil' in filtros:
             query['perfil'] = filtros['perfil']

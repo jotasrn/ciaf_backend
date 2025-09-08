@@ -1,5 +1,7 @@
 from app import mongo
 from bson import ObjectId
+import datetime
+from pymongo import UpdateOne
 
 def _validar_ids_usuarios(professor_id, alunos_ids):
     """
@@ -133,6 +135,20 @@ def listar_turmas():
     pipeline = _get_aggregation_pipeline()
     return list(mongo.db.turmas.aggregate(pipeline))
 
+def listar_turmas_filtradas(filtros):
+    """
+    Lista turmas com base em filtros de esporte e categoria.
+    """
+    query = {}
+    if 'esporte_id' in filtros:
+        query['esporte_id'] = ObjectId(filtros['esporte_id'])
+    if 'categoria' in filtros:
+        query['categoria'] = filtros['categoria']
+    
+    # Simplesmente busca os documentos que correspondem ao filtro
+    turmas = list(mongo.db.turmas.find(query))
+    return turmas
+
 def encontrar_turma_por_id(turma_id):
     """
     Encontra uma turma específica pelo ID, com dados populados.
@@ -210,3 +226,4 @@ def remover_aluno(turma_id, aluno_id):
         {"$pull": {"alunos_ids": ObjectId(aluno_id)}} # $pull remove a instância do item do array
     )
     return resultado.modified_count
+

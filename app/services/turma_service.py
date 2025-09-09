@@ -43,12 +43,13 @@ def criar_turma(dados_turma):
         raise ValueError("Esporte com o ID fornecido não encontrado.")
 
     # Valida se os usuários (professor e alunos) são válidos
-    _validar_ids_usuarios(professor_id, alunos_ids)
+    if professor_id:
+        _validar_ids_usuarios(professor_id, alunos_ids)
 
     nova_turma = {
         "nome": dados_turma['nome'],
         "esporte_id": esporte_id,
-        "categoria": dados_turma.get('categoria', 'Geral'), # Adiciona o novo campo
+        "categoria": dados_turma.get('categoria', 'Geral'),
         "descricao": dados_turma.get('descricao', ''),
         "professor_id": ObjectId(professor_id),
         "alunos_ids": [ObjectId(aid) for aid in alunos_ids],
@@ -64,11 +65,9 @@ def _get_aggregation_pipeline(turma_id=None):
     """
     pipeline = []
     if turma_id:
-        # Se um ID de turma específico é fornecido, começa filtrando por ele.
         pipeline.append({"$match": {"_id": ObjectId(turma_id)}})
 
     pipeline.extend([
-        # Join com 'esportes' para buscar o esporte
         {
             "$lookup": {
                 "from": "esportes",
@@ -77,7 +76,6 @@ def _get_aggregation_pipeline(turma_id=None):
                 "as": "esporte_info"
             }
         },
-        # Join com 'usuarios' para buscar o professor
         {
             "$lookup": {
                 "from": "usuarios",
@@ -86,7 +84,6 @@ def _get_aggregation_pipeline(turma_id=None):
                 "as": "professor_info"
             }
         },
-        # Join com 'usuarios' para buscar os alunos
         {
             "$lookup": {
                 "from": "usuarios",
@@ -95,20 +92,17 @@ def _get_aggregation_pipeline(turma_id=None):
                 "as": "alunos_info"
             }
         },
-        # Formata a saída para ser mais amigável
         {
             "$project": {
                 "nome": 1,
                 "descricao": 1,
                 "horarios": 1,
                 "categoria": 1,
-                # $arrayElemAt pega o primeiro (e único) elemento do array retornado pelo $lookup
                 "esporte": {"$arrayElemAt": ["$esporte_info", 0]},
                 "professor": {"$arrayElemAt": ["$professor_info", 0]},
                 "alunos": "$alunos_info"
             }
         },
-        # Projeta novamente para limpar os campos internos (como senha_hash) do professor e alunos
         {
             "$project": {
                 "nome": 1,
@@ -145,7 +139,6 @@ def listar_turmas_filtradas(filtros):
     if 'categoria' in filtros:
         query['categoria'] = filtros['categoria']
     
-    # Simplesmente busca os documentos que correspondem ao filtro
     turmas = list(mongo.db.turmas.find(query))
     return turmas
 
@@ -171,21 +164,21 @@ def atualizar_turma(turma_id, dados_atualizacao):
 
     update_fields = {}
     
-    # Adiciona campos permitidos para atualização
-    campos_permitidos = ['nome', 'descricao', 'horarios', 'categoria']
+    # Lista de campos que podem ser atualizados
+    campos_permitidos = ['nome', 'descricao', 'horarios', 'categoria', 'alunos_ids']
     for campo in campos_permitidos:
         if campo in dados_atualizacao:
-            update_fields[campo] = dados_atualizacao[campo]
-            
-    # Validação especial para professor_id e esporte_id
-    if 'professor_id' in dados_atualizacao:
-        _validar_ids_usuarios(dados_atualizacao['professor_id'], []) # Valida só o professor
-        update_fields['professor_id'] = ObjectId(dados_atualizacao['professor_id'])
-    if 'esporte_id' in dados_atualizacao:
-        esporte_obj_id = ObjectId(dados_atualizacao['esporte_id'])
-        if not mongo.db.esportes.find_one({"_id": esporte_obj_id}):
-                raise ValueError("Esporte com o ID fornecido não encontrado.")
-        update_fields['esporte_id'] = esporte_obj_id
+            if campo == 'alunos_ids':
+                # Garante que os IDs dos alunos sejam convertidos para ObjectId
+                update_fields[campo] = [ObjectId(aid) for aid in dados_atualizacao[campo]]
+            else:
+                update_fields[campo] = dados_atualizacao[campo]
+
+    # Valida o professor_id APENAS se ele for enviado nos dados de atualização
+    if 'professor_id' in dados_atualizacao and dados_atualizacao['professor_id']:
+        professor_id = dados_atualizacao['professor_id']
+        _validar_ids_usuarios(professor_id, []) # Valida só o professor
+        update_fields['professor_id'] = ObjectId(professor_id)
 
     if not update_fields:
         return 0
@@ -196,8 +189,6 @@ def atualizar_turma(turma_id, dados_atualizacao):
 def deletar_turma(turma_id):
     """
     Deleta uma turma permanentemente.
-    Aviso: Em um sistema de produção, verificaríamos se existem aulas ou outros
-    dados associados antes de permitir a exclusão (regra de negócio).
     """
     try:
         obj_id = ObjectId(turma_id)
@@ -208,14 +199,13 @@ def deletar_turma(turma_id):
         
 def adicionar_aluno(turma_id, aluno_id):
     """Adiciona um aluno a uma turma, evitando duplicatas."""
-    # Valida se o aluno existe, está ativo e tem o perfil correto
     aluno = mongo.db.usuarios.find_one({"_id": ObjectId(aluno_id), "perfil": "aluno", "ativo": True})
     if not aluno:
         raise ValueError("Aluno não encontrado, inativo ou com perfil incorreto.")
 
     resultado = mongo.db.turmas.update_one(
         {"_id": ObjectId(turma_id)},
-        {"$addToSet": {"alunos_ids": ObjectId(aluno_id)}} # $addToSet não adiciona se o ID já existir no array
+        {"$addToSet": {"alunos_ids": ObjectId(aluno_id)}}
     )
     return resultado.modified_count
 
@@ -223,7 +213,17 @@ def remover_aluno(turma_id, aluno_id):
     """Remove um aluno de uma turma."""
     resultado = mongo.db.turmas.update_one(
         {"_id": ObjectId(turma_id)},
-        {"$pull": {"alunos_ids": ObjectId(aluno_id)}} # $pull remove a instância do item do array
+        {"$pull": {"alunos_ids": ObjectId(aluno_id)}}
     )
     return resultado.modified_count
 
+def listar_turmas_por_professor(professor_id):
+    """
+    Busca no banco todas as turmas de um professor específico,
+    usando o pipeline de agregação para popular os dados.
+    """
+    # Reutilizamos a lógica do pipeline, adicionando um filtro ($match) no início
+    pipeline = _get_aggregation_pipeline()
+    pipeline.insert(0, {"$match": {"professor_id": ObjectId(professor_id)}})
+
+    return list(mongo.db.turmas.aggregate(pipeline))

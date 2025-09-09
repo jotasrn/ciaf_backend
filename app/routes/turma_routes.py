@@ -1,10 +1,12 @@
 from flask import Blueprint, request, jsonify
+from flask_jwt_extended import get_jwt_identity
 from app.services import turma_service
 from app.decorators.auth_decorators import admin_required
 from bson import ObjectId, json_util
 import json
 import traceback
 from app import mongo
+from app.decorators.auth_decorators import admin_required, role_required
 
 # Cria o Blueprint para as rotas de turma
 turma_bp = Blueprint('turma_bp', __name__)
@@ -123,3 +125,12 @@ def remover_aluno_da_turma(turma_id, aluno_id):
         return jsonify({"mensagem": "Aluno removido com sucesso."}), 200
     return jsonify({"mensagem": "Aluno não encontrado na turma ou turma não encontrada."}), 404
 
+@turma_bp.route('/professor/me', methods=['GET', 'OPTIONS'])
+@role_required(roles=['professor', 'admin']) # Permite que admins também usem, se necessário
+def get_minhas_turmas():
+    """
+    Retorna apenas as turmas associadas ao professor logado.
+    """
+    id_professor_logado = get_jwt_identity()
+    turmas = turma_service.listar_turmas_por_professor(id_professor_logado)
+    return json.loads(json_util.dumps(turmas)), 200

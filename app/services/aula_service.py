@@ -2,6 +2,7 @@ from app import mongo
 from bson import ObjectId
 import datetime
 from pymongo import UpdateOne
+from dateutil.relativedelta import relativedelta
 
 def criar_aula(dados_aula):
     """Cria uma nova aula para uma turma em uma data específica."""
@@ -184,3 +185,52 @@ def listar_turmas_filtradas(filtros):
     # Temporariamente, uma busca mais simples para validar a lógica:
     turmas = list(mongo.db.turmas.find(query))
     return turmas
+
+def agendar_aulas_para_turma(turma_id):
+    """
+    Gera as aulas para uma turma para o próximo mês,
+    com base nos horários cadastrados na turma.
+    """
+    turma = mongo.db.turmas.find_one({"_id": ObjectId(turma_id)})
+    if not turma or not turma.get('horarios'):
+        raise ValueError("Turma não encontrada ou não possui horários cadastrados.")
+
+    hoje = datetime.date.today()
+    data_inicio = hoje
+    data_fim = hoje + relativedelta(months=1)
+    
+    aulas_criadas = 0
+    dias_semana_map = {
+        "segunda": 0, "terca": 1, "quarta": 2, "quinta": 3, "sexta": 4, "sabado": 5, "domingo": 6
+    }
+
+    # Itera por cada dia no próximo mês
+    data_atual = data_inicio
+    while data_atual <= data_fim:
+        # Itera por cada regra de horário da turma
+        for horario in turma['horarios']:
+            dia_semana_turma = horario['dia_semana']
+            if data_atual.weekday() == dias_semana_map.get(dia_semana_turma):
+                # Monta a data e hora da aula
+                hora, minuto = map(int, horario['hora_inicio'].split(':'))
+                data_hora_aula = datetime.datetime.combine(data_atual, datetime.time(hour=hora, minute=minuto))
+
+                # Verifica se uma aula para esta turma neste dia e hora já existe
+                aula_existente = mongo.db.aulas.find_one({
+                    "turma_id": ObjectId(turma_id),
+                    "data": data_hora_aula
+                })
+
+                if not aula_existente:
+                    nova_aula = {
+                        "turma_id": ObjectId(turma_id),
+                        "data": data_hora_aula,
+                        "status": "agendada",
+                        "observacoes": ""
+                    }
+                    mongo.db.aulas.insert_one(nova_aula)
+                    aulas_criadas += 1
+        
+        data_atual += datetime.timedelta(days=1)
+        
+    return aulas_criadas

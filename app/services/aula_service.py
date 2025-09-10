@@ -207,13 +207,26 @@ def agendar_aulas_para_turma(turma_id):
     # Itera por cada dia no próximo mês
     data_atual = data_inicio
     while data_atual <= data_fim:
-        # Itera por cada regra de horário da turma
+        dia_da_semana_numero = data_atual.weekday()
+        
         for horario in turma['horarios']:
-            dia_semana_turma = horario['dia_semana']
-            if data_atual.weekday() == dias_semana_map.get(dia_semana_turma):
-                # Monta a data e hora da aula
-                hora, minuto = map(int, horario['hora_inicio'].split(':'))
-                data_hora_aula = datetime.datetime.combine(data_atual, datetime.time(hour=hora, minute=minuto))
+            dia_semana_turma = horario.get('dia_semana')
+            hora_inicio_str = horario.get('hora_inicio')
+
+            # ======================= CORREÇÃO PRINCIPAL AQUI =======================
+            # 1. Pula este horário se o dia ou a hora de início não estiverem definidos
+            if not dia_semana_turma or not hora_inicio_str:
+                continue
+
+            # 2. Verifica se o dia da semana corresponde
+            if dia_da_semana_numero == dias_semana_map.get(dia_semana_turma):
+                try:
+                    # 3. Converte a hora de forma segura
+                    hora, minuto = map(int, hora_inicio_str.split(':'))
+                    data_hora_aula = datetime.datetime.combine(data_atual, datetime.time(hour=hora, minute=minuto))
+                except (ValueError, TypeError):
+                    # Pula se o formato da hora for inválido (ex: '')
+                    continue
 
                 # Verifica se uma aula para esta turma neste dia e hora já existe
                 aula_existente = mongo.db.aulas.find_one({

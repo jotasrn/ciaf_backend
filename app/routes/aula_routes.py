@@ -6,11 +6,25 @@ from bson import ObjectId, json_util
 from flask_jwt_extended import get_jwt_identity, get_jwt
 import datetime
 import json
+from flask import Blueprint, request, jsonify
+import traceback
+from flask_jwt_extended import get_jwt
 
 
 # Garante que o Blueprint está definido corretamente
 aula_bp = Blueprint('aula_bp', __name__)
 
+@aula_bp.before_request
+def handle_aula_preflight():
+    """
+    Responde às requisições OPTIONS (CORS pre-flight) antes que elas
+    cheguem aos decorators, evitando o erro de autenticação.
+    """
+    if request.method.upper() == 'OPTIONS':
+        # Retorna uma resposta vazia e bem-sucedida.
+        # O flask-cors cuidará de adicionar os cabeçalhos necessários.
+        return '', 204
+    
 def _verificar_permissao_professor(turma_id):
     """
     Verifica se o usuário logado é o professor da turma ou um admin.
@@ -75,8 +89,16 @@ def registrar_presencas(aula_id):
     if not aula:
         return jsonify({"mensagem": "Aula não encontrada."}), 404
 
-    if aula.get('status') == 'realizada':
-        return jsonify({"mensagem": "Esta chamada já foi finalizada e não pode ser alterada."}), 403 # Forbidden
+    # Pega os dados (claims) do token para saber o perfil do usuário
+    claims = get_jwt()
+    user_role = claims.get("perfil")
+    
+    # Se a chamada já foi realizada E o usuário NÃO é um admin, bloqueia.
+    if aula.get('status') == 'realizada' and user_role != 'admin':
+        return jsonify({"mensagem": "Esta chamada já foi finalizada e não pode ser alterada por professores."}), 403
+
+    if not _verificar_permissao_professor(str(aula.get('turma_id'))):
+        return jsonify({"mensagem": "Acesso negado."}), 403 
 
     if not _verificar_permissao_professor(str(aula.get('turma_id'))):
         return jsonify({"mensagem": "Acesso negado: você não pode registrar presenças para esta turma."}), 403
@@ -89,10 +111,13 @@ def registrar_presencas(aula_id):
         total_modificado = aula_service.marcar_presenca_lote(aula_id, lista_presencas)
         return jsonify({"mensagem": f"Presença registrada para {total_modificado} aluno(s).", "aula_status": "realizada"}), 200
     except Exception as e:
-        return jsonify({"mensagem": "Erro ao registrar presença.", "detalhes": str(e)}), 500
+        print("!!!!!!!!!! ERRO AO REGISTRAR PRESENÇA !!!!!!!!!!")
+        traceback.print_exc() # Imprime o traceback completo
+        print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
+        return jsonify({"mensagem": "Erro interno ao registrar presença.", "detalhes": str(e)}), 500
 
 @aula_bp.route('/por-data', methods=['GET'])
-@role_required(roles=['admin', 'professor']) # <-- CORREÇÃO AQUI
+@role_required(roles=['admin', 'professor'])
 def get_aulas_do_dia():
     """
     [ADMIN, PROFESSOR] Retorna as aulas de um dia específico.
@@ -156,4 +181,8 @@ def agendar_novas_aulas(turma_id):
     except ValueError as e:
         return jsonify({"mensagem": str(e)}), 400
     except Exception as e:
+        # Este bloco irá capturar e imprimir o erro detalhado no terminal
+        print("!!!!!!!!!! ERRO AO AGENDAR AULAS !!!!!!!!!!")
+        traceback.print_exc() # Imprime o traceback completo
+        print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
         return jsonify({"mensagem": "Erro interno ao agendar aulas.", "detalhes": str(e)}), 500

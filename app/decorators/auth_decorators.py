@@ -32,3 +32,4 @@ def role_required(roles):
 def admin_required():
     """Um atalho para role_required(['admin'])"""
     return role_required(roles=['admin'])
+    

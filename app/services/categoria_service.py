@@ -42,3 +42,28 @@ def deletar_categoria(categoria_id):
 
     mongo.db.categorias.delete_one({"_id": obj_id})
     return True
+
+def listar_todas_categorias():
+    """
+    Lista todas as categorias, agregando o nome do esporte ao qual pertencem.
+    """
+    pipeline = [
+        {
+            "$lookup": {
+                "from": "esportes",
+                "localField": "esporte_id",
+                "foreignField": "_id",
+                "as": "esporte_info"
+            }
+        },
+        {"$unwind": "$esporte_info"},
+        {
+            "$project": {
+                "nome": 1,
+                "esporte_id": 1,
+                "esporte_nome": "$esporte_info.nome"
+            }
+        },
+        {"$sort": {"esporte_nome": 1, "nome": 1}}
+    ]
+    return list(mongo.db.categorias.aggregate(pipeline))

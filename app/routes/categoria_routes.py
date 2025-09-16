@@ -11,10 +11,19 @@ def handle_categoria_preflight():
     if request.method.upper() == 'OPTIONS':
         return '', 204
 
-@categoria_bp.route('/<string:esporte_id>', methods=['GET'])
+@categoria_bp.route('/', methods=['GET', 'OPTIONS'])
 @admin_required()
-def get_categorias(esporte_id):
-    categorias = categoria_service.listar_categorias_por_esporte(esporte_id)
+def get_categorias():
+    """
+    [ADMIN] Lista todas as categorias.
+    Pode ser filtrado por esporte_id (opcional).
+    """
+    esporte_id = request.args.get('esporte_id')
+    if esporte_id:
+        categorias = categoria_service.listar_categorias_por_esporte(esporte_id)
+    else:
+        categorias = categoria_service.listar_todas_categorias()
+        
     return json.loads(json_util.dumps(categorias)), 200
 
 @categoria_bp.route('/', methods=['POST'])
@@ -47,3 +56,4 @@ def deletar_categoria_existente(categoria_id):
         return '', 204 # No Content
     except ValueError as e:
         return jsonify({"mensagem": str(e)}), 400
+

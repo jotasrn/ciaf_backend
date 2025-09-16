@@ -22,10 +22,9 @@ def criar_app():
     # Configuração de CORS para permitir acesso do frontend
     origins = [
         "http://localhost:53763", # Portas de desenvolvimento do Flutter
-        "http://127.0.0.1:53763",
         "https://ciaf-gestao.netlify.app" # URL de produção do seu site
     ]
-    CORS(app, resources={r"/api/*": {"origins": origins}})
+    CORS(app, resources={r"/api/*": {"origins": "*"}})
     
     # Inicialização das extensões com a aplicação
     mongo.init_app(app)

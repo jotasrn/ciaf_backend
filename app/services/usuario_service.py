@@ -2,28 +2,50 @@ from app import mongo
 import bcrypt
 import datetime
 from bson import ObjectId
+from dateutil.relativedelta import relativedelta
 
 def _adicionar_aluno_a_turma(aluno_id, turma_id):
-    """Função auxiliar para adicionar um aluno a uma turma."""
-    if not turma_id:
+    """Função auxiliar para adicionar/mover um aluno para uma turma."""
+    if not turma_id or turma_id == 'Nenhuma': # 'Nenhuma' pode ser um valor enviado pelo frontend
         return
 
-    # Primeiro, remove o aluno de qualquer outra turma em que ele possa estar
+    aluno_obj_id = ObjectId(aluno_id)
+    turma_obj_id = ObjectId(turma_id)
+
+    # Primeiro, remove o aluno de qualquer outra turma em que ele possa estar,
+    # garantindo que um aluno pertença a apenas uma turma.
     mongo.db.turmas.update_many(
-        {"alunos_ids": ObjectId(aluno_id)},
-        {"$pull": {"alunos_ids": ObjectId(aluno_id)}}
+        {"alunos_ids": aluno_obj_id},
+        {"$pull": {"alunos_ids": aluno_obj_id}}
     )
 
-    # Adiciona o aluno à nova turma
+    # Adiciona o aluno à nova turma selecionada
     mongo.db.turmas.update_one(
-        {"_id": ObjectId(turma_id)},
-        {"$addToSet": {"alunos_ids": ObjectId(aluno_id)}} # $addToSet previne duplicatas
+        {"_id": turma_obj_id},
+        {"$addToSet": {"alunos_ids": aluno_obj_id}} # $addToSet previne duplicatas
     )
+
+def _vincular_professor_a_turmas(professor_id, turmas_ids):
+    """Função auxiliar para vincular um professor a uma ou mais turmas."""
+    prof_obj_id = ObjectId(professor_id)
+    
+    # Remove este professor de QUALQUER turma para começar do zero.
+    # Isso garante que se o admin desmarcar uma turma, o professor seja removido dela.
+    mongo.db.turmas.update_many(
+        {"professor_id": prof_obj_id},
+        {"$unset": {"professor_id": ""}}
+    )
+
+    # Se uma lista de turmas foi enviada, vincula o professor a elas.
+    if turmas_ids:
+        mongo.db.turmas.update_many(
+            {"_id": {"$in": [ObjectId(tid) for tid in turmas_ids]}},
+            {"$set": {"professor_id": prof_obj_id}}
+        )
 
 def criar_usuario(dados_usuario):
     """
-    Cria um novo usuário e, se for um aluno com turma_id,
-    o adiciona à turma.
+    Cria um novo usuário e, se aplicável, o vincula a turmas.
     """
     usuarios_collection = mongo.db.usuarios
     if usuarios_collection.find_one({"email": dados_usuario['email']}):
@@ -36,95 +58,111 @@ def criar_usuario(dados_usuario):
         "nome_completo": dados_usuario['nome_completo'],
         "email": dados_usuario['email'],
         "senha_hash": senha_hash.decode('utf-8'),
-        "perfil": "aluno", # Garante que seja sempre aluno
-        "data_nascimento": datetime.datetime.fromisoformat(dados_usuario['data_nascimento']),
+        "perfil": dados_usuario.get('perfil', 'aluno'),
+        "data_nascimento": datetime.datetime.fromisoformat(dados_usuario['data_nascimento']) if dados_usuario.get('data_nascimento') else None,
         "ativo": True,
         "data_criacao": datetime.datetime.utcnow(),
-        "data_matricula": datetime.datetime.fromisoformat(dados_usuario.get('data_matricula')),
+        "data_matricula": datetime.datetime.fromisoformat(dados_usuario.get('data_matricula')) if dados_usuario.get('data_matricula') else None,
         "contato_responsavel": dados_usuario.get('contato_responsavel', {})
     }
     
     resultado = usuarios_collection.insert_one(novo_usuario)
-    aluno_id = resultado.inserted_id
+    novo_id = resultado.inserted_id
 
-    # Lógica de vínculo com a turma
-    turma_id = dados_usuario.get('turma_id')
-    if turma_id:
-        _adicionar_aluno_a_turma(aluno_id, turma_id)
+    # Lógica de vínculo com a turma após a criação do usuário
+    if novo_usuario['perfil'] == 'aluno':
+        turma_id = dados_usuario.get('turma_id')
+        if turma_id:
+            _adicionar_aluno_a_turma(novo_id, turma_id)
+    
+    elif novo_usuario['perfil'] == 'professor':
+        turmas_ids = dados_usuario.get('turmas_ids')
+        if turmas_ids:
+            _vincular_professor_a_turmas(novo_id, turmas_ids)
 
-    return str(aluno_id)
+    return novo_id
 
 def atualizar_usuario(usuario_id, dados_atualizacao):
     """
     Atualiza os dados de um usuário e o move para a turma correta, se informado.
     """
-    try:
-        obj_id = ObjectId(usuario_id)
-    except Exception:
-        raise ValueError("ID de usuário inválido.")
-
+    obj_id = ObjectId(usuario_id)
     update_fields = {}
     
     campos_permitidos = [
         'nome_completo', 'email', 'perfil', 'ativo',
-        'contato_responsavel', 'data_nascimento', 'data_matricula'
+        'contato_responsavel'
     ]
     for campo in campos_permitidos:
         if campo in dados_atualizacao:
-            # Converte as strings de data para objetos ISODate
-            if campo in ['data_nascimento', 'data_matricula'] and dados_atualizacao[campo]:
-                update_fields[campo] = datetime.datetime.fromisoformat(dados_atualizacao[campo])
-            else:
-                update_fields[campo] = dados_atualizacao[campo]
+            update_fields[campo] = dados_atualizacao[campo]
+            
+    # Converte as strings de data para objetos ISODate de forma segura
+    if 'data_nascimento' in dados_atualizacao and dados_atualizacao['data_nascimento']:
+         update_fields['data_nascimento'] = datetime.datetime.fromisoformat(dados_atualizacao['data_nascimento'])
+    if 'data_matricula' in dados_atualizacao and dados_atualizacao['data_matricula']:
+         update_fields['data_matricula'] = datetime.datetime.fromisoformat(dados_atualizacao['data_matricula'])
 
     if 'senha' in dados_atualizacao and dados_atualizacao['senha']:
         senha_texto_puro = dados_atualizacao['senha'].encode('utf-8')
         update_fields['senha_hash'] = bcrypt.hashpw(senha_texto_puro, bcrypt.gensalt()).decode('utf-8')
 
     if update_fields:
-        resultado = mongo.db.usuarios.update_one(
-            {"_id": obj_id},
-            {"$set": update_fields}
-        )
+        mongo.db.usuarios.update_one({"_id": obj_id}, {"$set": update_fields})
     
     # Lógica de vínculo com a turma
-    turma_id = dados_atualizacao.get('turma_id')
-    if turma_id:
-        _adicionar_aluno_a_turma(usuario_id, turma_id)
-
-    if not update_fields and not turma_id:
-        return 0
-
-    return resultado.modified_count if 'resultado' in locals() else 0
-
-def encontrar_usuario_por_email(email):
-    return mongo.db.usuarios.find_one({"email": email})
-
-def verificar_senha(senha_hash, senha_fornecida):
-    return bcrypt.checkpw(senha_fornecida.encode('utf-8'), senha_hash.encode('utf-8'))
+    perfil_atual = dados_atualizacao.get('perfil') or mongo.db.usuarios.find_one({"_id": obj_id}).get('perfil')
+    
+    if perfil_atual == 'aluno':
+        turma_id = dados_atualizacao.get('turma_id')
+        if turma_id is not None: # Permite desvincular passando turma_id nulo
+            _adicionar_aluno_a_turma(usuario_id, turma_id)
+    
+    elif perfil_atual == 'professor':
+        turmas_ids = dados_atualizacao.get('turmas_ids')
+        if turmas_ids is not None:
+            _vincular_professor_a_turmas(usuario_id, turmas_ids)
+    
+    return True # Retorna sucesso
 
 def listar_usuarios(filtros=None):
-    query = {'ativo': True}
+    """
+    Retorna uma lista de usuários, com suporte a filtros.
+    """
+    query = { 'ativo': True } # Por padrão, sempre busca usuários ativos
     if filtros:
         if 'perfil' in filtros:
             query['perfil'] = filtros['perfil']
-        if 'perfil_ne' in filtros:
-            query['perfil'] = {'$ne': filtros['perfil_ne']}
+        if 'perfil_ne' in filtros: # 'ne' significa 'Not Equal' (diferente de)
+            query['perfil'] = {"$ne": filtros['perfil_ne']}
         if 'status_pagamento' in filtros:
-            query['status_pagamento.status'] = filtros['status_pagamento']
-    
+             query['status_pagamento.status'] = filtros['status_pagamento']
+            
     return list(mongo.db.usuarios.find(query, {"senha_hash": 0}))
 
-def encontrar_usuario_por_id(usuario_id):
-    try:
-        obj_id = ObjectId(usuario_id)
-        return mongo.db.usuarios.find_one({"_id": obj_id}, {"senha_hash": 0})
-    except Exception:
-        return None
+def encontrar_usuario_por_email(email):
+    """Busca um usuário pelo seu e-mail."""
+    return mongo.db.usuarios.find_one({"email": email})
+
+def verificar_senha(senha_hash, senha_fornecida):
+    """Verifica se a senha fornecida corresponde ao hash armazenado."""
+    return bcrypt.checkpw(senha_fornecida.encode('utf-8'), senha_hash.encode('utf-8'))
 
 def deletar_usuario(usuario_id):
+    """Realiza um 'soft delete', marcando o usuário como inativo."""
     try:
         obj_id = ObjectId(usuario_id)
+        # Além de desativar, também remove o aluno de qualquer turma
+        mongo.db.turmas.update_many(
+            {"alunos_ids": obj_id},
+            {"$pull": {"alunos_ids": obj_id}}
+        )
+        # E desvincula o professor
+        mongo.db.turmas.update_many(
+            {"professor_id": obj_id},
+            {"$unset": {"professor_id": ""}}
+        )
+        
         resultado = mongo.db.usuarios.update_one(
             {"_id": obj_id},
             {"$set": {"ativo": False}}
@@ -134,23 +172,51 @@ def deletar_usuario(usuario_id):
         return 0
 
 def atualizar_status_pagamento(usuario_id, dados_pagamento):
-    try:
-        obj_id = ObjectId(usuario_id)
-    except Exception:
-        raise ValueError("ID de usuário inválido.")
-
+    """
+    Atualiza o status de pagamento de um usuário.
+    Se o novo status for 'pago', calcula a data do próximo vencimento.
+    """
+    obj_id = ObjectId(usuario_id)
     status = dados_pagamento.get('status')
     if status not in ['pendente', 'pago', 'atrasado']:
         raise ValueError("Status de pagamento inválido.")
         
     update_fields = {"status_pagamento.status": status}
     
-    if 'data_vencimento' in dados_pagamento:
-        update_fields['status_pagamento.data_vencimento'] = datetime.datetime.fromisoformat(dados_pagamento['data_vencimento'])
-
+    # Lógica de vencimento
+    if status == 'pago':
+        aluno = mongo.db.usuarios.find_one({"_id": obj_id})
+        # Usa a data de matrícula como base para o dia do vencimento
+        data_matricula = aluno.get('data_matricula', datetime.datetime.utcnow())
+        hoje = datetime.datetime.utcnow()
+        
+        # Calcula o próximo vencimento
+        proximo_vencimento = data_matricula.replace(year=hoje.year, month=hoje.month)
+        if proximo_vencimento < hoje:
+            proximo_vencimento += relativedelta(months=1)
+            
+        update_fields['status_pagamento.data_ultimo_pagamento'] = hoje
+        update_fields['status_pagamento.data_vencimento'] = proximo_vencimento
+    
     resultado = mongo.db.usuarios.update_one(
         {"_id": obj_id},
         {"$set": update_fields}
     )
     return resultado.modified_count
 
+def verificar_e_atualizar_vencimentos():
+    """
+    Varre todos os alunos e atualiza o status de pagamento para 'pendente'
+    se a data de vencimento já passou e o status ainda é 'pago'.
+    """
+    hoje = datetime.datetime.utcnow()
+    resultado = mongo.db.usuarios.update_many(
+        {
+            "perfil": "aluno",
+            "ativo": True,
+            "status_pagamento.status": "pago",
+            "status_pagamento.data_vencimento": {"$lt": hoje}
+        },
+        {"$set": {"status_pagamento.status": "pendente"}}
+    )
+    return resultado.modified_count

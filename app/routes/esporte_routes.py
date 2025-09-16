@@ -91,3 +91,33 @@ def deletar_esporte_existente(esporte_id):
     except ValueError as e:
         # Captura o erro do service que impede a exclusão de esporte em uso
         return jsonify({"mensagem": str(e)}), 400
+
+@esporte_bp.route('/com-categorias', methods=['GET'])
+@admin_required()
+def get_esportes_com_categorias():
+    """
+    Retorna uma lista de todos os esportes, cada um com uma sub-lista
+    de suas categorias cadastradas.
+    """
+    try:
+        pipeline = [
+            {
+                "$lookup": {
+                    "from": "categorias",
+                    "localField": "_id",
+                    "foreignField": "esporte_id",
+                    "as": "categorias"
+                }
+            },
+            {
+                "$project": {
+                    "nome": 1,
+                    "categorias.nome": 1,
+                    "categorias._id": 1
+                }
+            }
+        ]
+        esportes = list(mongo.db.esportes.aggregate(pipeline))
+        return json.loads(json_util.dumps(esportes)), 200
+    except Exception as e:
+        return jsonify({"mensagem": "Erro ao buscar esportes com categorias.", "detalhes": str(e)}), 500

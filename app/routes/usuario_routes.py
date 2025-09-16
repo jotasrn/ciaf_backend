@@ -138,3 +138,14 @@ def definir_status_pagamento(usuario_id):
     except ValueError as e:
         return jsonify({"mensagem": str(e)}), 400
 
+@usuario_bp.route('/verificar-pagamentos', methods=['POST'])
+@admin_required()
+def verificar_pagamentos():
+    """
+    [ADMIN] Aciona a verificação de mensalidades vencidas.
+    """
+    try:
+        modificados = usuario_service.verificar_e_atualizar_vencimentos()
+        return jsonify({"mensagem": f"{modificados} aluno(s) atualizado(s) para 'pendente'."}), 200
+    except Exception as e:
+        return jsonify({"mensagem": "Erro ao verificar pagamentos.", "detalhes": str(e)}), 500

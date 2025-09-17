@@ -3,6 +3,8 @@ from app.services import esporte_service
 from app.decorators.auth_decorators import admin_required, role_required
 from bson import json_util
 import json
+import traceback
+from app import mongo
 
 # Cria o Blueprint para as rotas de esporte
 esporte_bp = Blueprint('esporte_bp', __name__)
@@ -13,11 +15,6 @@ def handle_esporte_preflight():
     Responde às requisições OPTIONS (CORS pre-flight) antes que elas
     cheguem aos decorators, evitando erros de autenticação.
     """
-    if request.method.upper() == 'OPTIONS':
-        return '', 204
-    
-@esporte_bp.before_request
-def handle_esporte_preflight():
     if request.method.upper() == 'OPTIONS':
         return '', 204
 
@@ -53,6 +50,39 @@ def obter_todos_esportes():
     """
     esportes = esporte_service.listar_esportes()
     return bson_response(esportes)
+
+@esporte_bp.route('/com-categorias', methods=['GET'])
+@admin_required()
+def get_esportes_com_categorias():
+    """
+    Retorna uma lista de todos os esportes, cada um com uma sub-lista
+    de suas categorias cadastradas.
+    """
+    try:
+        pipeline = [
+            {
+                "$lookup": {
+                    "from": "categorias",
+                    "localField": "_id",
+                    "foreignField": "esporte_id",
+                    "as": "categorias"
+                }
+            },
+            {
+                "$project": {
+                    "nome": 1,
+                    "categorias.nome": 1,
+                    "categorias._id": 1
+                }
+            }
+        ]
+        esportes = list(mongo.db.esportes.aggregate(pipeline))
+        return json.loads(json_util.dumps(esportes)), 200
+    except Exception as e:
+        print("!!!!!!!!!! ERRO AO BUSCAR ESPORTES COM CATEGORIAS !!!!!!!!!!")
+        traceback.print_exc()
+        print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
+        return jsonify({"mensagem": "Erro interno ao buscar esportes com categorias.", "detalhes": str(e)}), 500
 
 @esporte_bp.route('/<string:esporte_id>', methods=['GET'])
 @role_required(roles=['admin', 'professor'])
@@ -101,36 +131,4 @@ def deletar_esporte_existente(esporte_id):
     except ValueError as e:
         # Captura o erro do service que impede a exclusão de esporte em uso
         return jsonify({"mensagem": str(e)}), 400
-  
-@esporte_bp.route('/com-categorias', methods=['GET'])
-@admin_required()
-def get_esportes_com_categorias():
-    """
-    Retorna uma lista de todos os esportes, cada um com uma sub-lista
-    de suas categorias cadastradas.
-    """
-    try:
-        pipeline = [
-            {
-                "$lookup": {
-                    "from": "categorias",
-                    "localField": "_id",
-                    "foreignField": "esporte_id",
-                    "as": "categorias"
-                }
-            },
-            {
-                "$project": {
-                    "nome": 1,
-                    "categorias.nome": 1,
-                    "categorias._id": 1
-                }
-            }
-        ]
-        esportes = list(mongo.db.esportes.aggregate(pipeline))
-        return json.loads(json_util.dumps(esportes)), 200
-    except Exception as e:
-        print("!!!!!!!!!! ERRO AO BUSCAR ESPORTES COM CATEGORIAS !!!!!!!!!!")
-        traceback.print_exc()
-        print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
-        return jsonify({"mensagem": "Erro interno ao buscar esportes com categorias.", "detalhes": str(e)}), 500
+

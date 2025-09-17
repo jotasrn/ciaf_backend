@@ -2,10 +2,20 @@ from flask import Blueprint, request, jsonify
 from app.services import esporte_service
 from app.decorators.auth_decorators import admin_required, role_required
 from bson import json_util
+import json
 
 # Cria o Blueprint para as rotas de esporte
 esporte_bp = Blueprint('esporte_bp', __name__)
 
+@esporte_bp.before_request
+def handle_esporte_preflight():
+    """
+    Responde às requisições OPTIONS (CORS pre-flight) antes que elas
+    cheguem aos decorators, evitando erros de autenticação.
+    """
+    if request.method.upper() == 'OPTIONS':
+        return '', 204
+    
 @esporte_bp.before_request
 def handle_esporte_preflight():
     if request.method.upper() == 'OPTIONS':
@@ -91,8 +101,8 @@ def deletar_esporte_existente(esporte_id):
     except ValueError as e:
         # Captura o erro do service que impede a exclusão de esporte em uso
         return jsonify({"mensagem": str(e)}), 400
-
-@esporte_bp.route('/com-categorias', methods=['GET'])
+  
+@esporte_bp.route('/com-categorias', methods=['GET', 'OPTIONS'])
 @admin_required()
 def get_esportes_com_categorias():
     """

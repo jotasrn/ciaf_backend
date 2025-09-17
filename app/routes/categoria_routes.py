@@ -33,8 +33,8 @@ def criar_nova_categoria():
     if not dados or 'nome' not in dados or 'esporte_id' not in dados:
         return jsonify({"mensagem": "Nome e esporte_id são obrigatórios."}), 400
     try:
-        categoria_service.criar_categoria(dados)
-        return jsonify({"mensagem": "Categoria criada com sucesso!"}), 201
+        categoria_id = categoria_service.criar_categoria(dados)
+        return jsonify({"mensagem": "Categoria criada com sucesso!", "categoria_id": str(categoria_id)}), 201
     except ValueError as e:
         return jsonify({"mensagem": str(e)}), 409
 
@@ -57,3 +57,12 @@ def deletar_categoria_existente(categoria_id):
     except ValueError as e:
         return jsonify({"mensagem": str(e)}), 400
 
+@categoria_bp.route('/com-turma-inicial', methods=['POST'])
+@admin_required()
+def criar_categoria_com_turma():
+    dados = request.get_json()
+    try:
+        categoria_id = categoria_service.criar_categoria_e_turma_inicial(dados)
+        return jsonify({"mensagem": "Categoria criada com sucesso!", "categoria_id": str(categoria_id)}), 201
+    except ValueError as e:
+        return jsonify({"mensagem": str(e)}), 400

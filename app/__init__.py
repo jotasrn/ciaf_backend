@@ -5,38 +5,29 @@ from flask_jwt_extended import JWTManager
 from config import Config
 import pytz
 
-# Inicialização das extensões
 mongo = PyMongo()
 timezone = None
 
 def criar_app():
-    """
-    Cria e configura uma instância da aplicação Flask (Application Factory).
-    """
     app = Flask(__name__)
     app.config.from_object(Config)
-    
-    # Chave secreta para JWT
     app.config["JWT_SECRET_KEY"] = app.config["SECRET_KEY"]
 
-    # Configuração de CORS para permitir acesso do frontend
+
     origins = [
-        "http://localhost:53763", # Portas de desenvolvimento do Flutter
-        "https://ciaf-gestao.netlify.app" # URL de produção do seu site
+        r"http://localhost:.*", # Para desenvolvimento local
+        "https://ciaf-gestao.netlify.app" # URL de produção
     ]
-    CORS(app, resources={r"/api/*": {"origins": "*"}})
-    
-    # Inicialização das extensões com a aplicação
+    CORS(app, resources={r"/api/*": {"origins": origins}}, supports_credentials=True)
+
     mongo.init_app(app)
     jwt = JWTManager(app)
 
-    # Configuração do timezone global da aplicação
     global timezone
     timezone = pytz.timezone(app.config['TIMEZONE'])
 
-
     with app.app_context():
-        # Importar e registrar os blueprints (módulos de rotas)
+        # Imports e registros dos blueprints...
         from .routes.health_check import health_check_bp
         from .routes.auth_routes import auth_bp
         from .routes.usuario_routes import usuario_bp

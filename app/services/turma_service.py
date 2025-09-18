@@ -1,229 +1,238 @@
-from app import mongo
 from bson import ObjectId
-import datetime
-from pymongo import UpdateOne
+from pymongo.errors import WriteError
+from flask import current_app
+from app import mongo
 
-def _validar_ids_usuarios(professor_id, alunos_ids):
+def _validar_campos_obrigatorios(dados, campos):
     """
-    Função auxiliar para validar se os IDs de usuários existem e têm os perfis corretos.
-    Isso garante a integridade dos dados da turma.
+    Verifica se os campos obrigatórios estão presentes nos dados.
+    É mais flexível para permitir listas vazias e strings vazias em contextos específicos.
     """
-    # Valida professor
-    professor = mongo.db.usuarios.find_one({
-        "_id": ObjectId(professor_id),
-        "perfil": "professor",
-        "ativo": True
-    })
-    if not professor:
-        raise ValueError(f"Professor com ID '{professor_id}' não encontrado, inativo ou não possui o perfil de professor.")
+    campos_faltando = []
+    for campo in campos:
+        # Permite que 'horarios' e 'alunos_ids' sejam listas vazias, mas a chave deve existir
+        if campo in ['horarios', 'alunos_ids']:
+            if campo not in dados:
+                campos_faltando.append(campo)
+            continue # Pula para o próximo campo
 
-    # Valida alunos
-    if alunos_ids:
-        # Garante que a lista de IDs de alunos não contenha duplicatas antes de contar
-        ids_unicos_alunos = list(set(alunos_ids))
-        alunos_encontrados = mongo.db.usuarios.count_documents({
-            "_id": {"$in": [ObjectId(aid) for aid in ids_unicos_alunos]},
-            "perfil": "aluno",
-            "ativo": True
-        })
-        if alunos_encontrados != len(ids_unicos_alunos):
-            raise ValueError("Um ou mais IDs de alunos são inválidos, inativos ou não possuem o perfil de aluno.")
-    return True
+        # Para outros campos, não permite valor vazio ou nulo
+        if campo not in dados or dados[campo] == '' or dados[campo] is None:
+            # Exceção para horários, onde hora_inicio e hora_fim podem ser vazios
+            if campo in ['hora_inicio', 'hora_fim']:
+                continue
+            campos_faltando.append(campo)
+    
+    if campos_faltando:
+        raise ValueError(f"Campos obrigatórios ausentes: {', '.join(campos_faltando)}")
 
-def criar_turma(dados_turma):
-    """
-    Cria uma nova turma após validar os IDs do esporte, professor e alunos.
-    """
-    esporte_id = ObjectId(dados_turma['esporte_id'])
-    professor_id = dados_turma['professor_id']
-    alunos_ids = dados_turma.get('alunos_ids', [])
 
-    # Valida se o esporte existe
-    if not mongo.db.esportes.find_one({"_id": esporte_id}):
-        raise ValueError("Esporte com o ID fornecido não encontrado.")
+def _converter_para_objectid(id_string, nome_campo):
+    """Converte uma string para ObjectId, levantando erro se inválida."""
+    if not id_string:
+        raise ValueError(f"O campo '{nome_campo}' não pode ser vazio.")
+    try:
+        return ObjectId(id_string)
+    except Exception:
+        raise ValueError(f"O formato do '{nome_campo}' é inválido: {id_string}")
 
-    # Valida se os usuários (professor e alunos) são válidos
-    if professor_id:
-        _validar_ids_usuarios(professor_id, alunos_ids)
+def _validar_dados_turma(dados):
+    """Valida a estrutura e os tipos de dados para criar/atualizar uma turma."""
+    campos_obrigatorios = ['nome', 'esporte_id', 'categoria', 'professor_id', 'alunos_ids', 'horarios']
+    _validar_campos_obrigatorios(dados, campos_obrigatorios)
 
-    nova_turma = {
-        "nome": dados_turma['nome'],
-        "esporte_id": esporte_id,
-        "categoria": dados_turma.get('categoria', 'Geral'),
-        "descricao": dados_turma.get('descricao', ''),
-        "professor_id": ObjectId(professor_id),
-        "alunos_ids": [ObjectId(aid) for aid in alunos_ids],
-        "horarios": dados_turma.get('horarios', [])
+    if not isinstance(dados.get('horarios'), list) or not all(isinstance(h, dict) for h in dados.get('horarios', [])):
+        raise ValueError("O campo 'horarios' deve ser uma lista de objetos (dicionários).")
+
+    for horario in dados.get('horarios', []):
+        # Para cada horário, 'dia_semana' é o único campo estritamente obrigatório
+        _validar_campos_obrigatorios(horario, ['dia_semana'])
+
+
+def _preparar_documento_turma(dados):
+    """Prepara o dicionário de dados para inserção ou atualização no MongoDB."""
+    documento = {
+        'nome': dados['nome'],
+        'categoria': dados['categoria'],
+        'horarios': dados['horarios'],
+        'esporte_id': _converter_para_objectid(dados['esporte_id'], 'esporte_id'),
+        'professor_id': _converter_para_objectid(dados['professor_id'], 'professor_id'),
+        'alunos_ids': [_converter_para_objectid(aluno_id, 'aluno_id') for aluno_id in dados.get('alunos_ids', [])]
     }
-    resultado = mongo.db.turmas.insert_one(nova_turma)
-    return str(resultado.inserted_id)
+    return documento
 
-def _get_aggregation_pipeline(turma_id=None):
-    """
-    Cria um pipeline de agregação para buscar turmas e popular os dados
-    do esporte, professor e alunos, evitando múltiplas queries ao banco.
-    """
-    pipeline = []
-    if turma_id:
-        pipeline.append({"$match": {"_id": ObjectId(turma_id)}})
+# --- Lógica de Negócio ---
 
-    pipeline.extend([
-        {
-            "$lookup": {
-                "from": "esportes",
-                "localField": "esporte_id",
-                "foreignField": "_id",
-                "as": "esporte_info"
-            }
-        },
-        {
-            "$lookup": {
-                "from": "usuarios",
-                "localField": "professor_id",
-                "foreignField": "_id",
-                "as": "professor_info"
-            }
-        },
-        {
-            "$lookup": {
-                "from": "usuarios",
-                "localField": "alunos_ids",
-                "foreignField": "_id",
-                "as": "alunos_info"
-            }
-        },
-        {
-            "$project": {
-                "nome": 1,
-                "descricao": 1,
-                "horarios": 1,
-                "categoria": 1,
-                "esporte": {"$arrayElemAt": ["$esporte_info", 0]},
-                "professor": {"$arrayElemAt": ["$professor_info", 0]},
-                "alunos": "$alunos_info"
-            }
-        },
-        {
-            "$project": {
-                "nome": 1,
-                "descricao": 1,
-                "horarios": 1,
-                "categoria": 1,
-                "esporte._id": 1,
-                "esporte.nome": 1,
-                "professor._id": 1,
-                "professor.nome_completo": 1,
-                "professor.email": 1,
-                "alunos._id": 1,
-                "alunos.nome_completo": 1,
-                "alunos.email": 1
-            }
-        }
-    ])
-    return pipeline
+def criar_turma(dados):
+    """
+    Cria uma nova turma, valida os dados, insere no banco e atualiza
+    os documentos relacionados (professor e alunos).
+    """
+    try:
+        _validar_dados_turma(dados)
+        dados_turma_para_inserir = _preparar_documento_turma(dados)
+
+        resultado = mongo.db.turmas.insert_one(dados_turma_para_inserir)
+        nova_turma_id = resultado.inserted_id
+        current_app.logger.info(f"Turma '{dados['nome']}' criada com sucesso. ID: {nova_turma_id}")
+
+        professor_id = str(dados_turma_para_inserir['professor_id'])
+        alunos_ids = [str(aluno_id) for aluno_id in dados_turma_para_inserir['alunos_ids']]
+
+        _vincular_professor_a_turmas(professor_id, [str(nova_turma_id)])
+        _vincular_alunos_a_turma(alunos_ids, str(nova_turma_id))
+
+        return str(nova_turma_id)
+
+    except (ValueError, WriteError) as e:
+        current_app.logger.error(f"!!!!!!!!!! ERRO AO CRIAR TURMA !!!!!!!!!!\n{e}\n!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
+        raise e
+    except Exception as e:
+        current_app.logger.error(f"!!!!!!!!!! ERRO INESPERADO AO CRIAR TURMA !!!!!!!!!!\n{e}\n!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
+        raise Exception(f"Ocorreu um erro inesperado: {e}")
+
 
 def listar_turmas():
-    """
-    Lista todas as turmas com informações do esporte, professor e alunos populadas.
-    """
-    pipeline = _get_aggregation_pipeline()
+    """Lista todas as turmas com informações agregadas de esporte, professor e alunos."""
+    pipeline = [
+        {'$lookup': {'from': 'esportes', 'localField': 'esporte_id', 'foreignField': '_id', 'as': 'esporte'}},
+        {'$lookup': {'from': 'usuarios', 'localField': 'professor_id', 'foreignField': '_id', 'as': 'professor'}},
+        {'$lookup': {'from': 'usuarios', 'localField': 'alunos_ids', 'foreignField': '_id', 'as': 'alunos'}},
+        {'$unwind': {'path': '$esporte', 'preserveNullAndEmptyArrays': True}},
+        {'$unwind': {'path': '$professor', 'preserveNullAndEmptyArrays': True}},
+        {
+            '$project': {
+                'nome': 1, 'categoria': 1, 'horarios': 1,
+                'esporte': {'_id': '$esporte._id', 'nome': '$esporte.nome'},
+                'professor': {'_id': '$professor._id', 'nome_completo': '$professor.nome_completo'},
+                'alunos': '$alunos',
+                'total_alunos': {'$size': '$alunos_ids'}
+            }
+        }
+    ]
     return list(mongo.db.turmas.aggregate(pipeline))
 
-def listar_turmas_filtradas(filtros):
-    """
-    Lista turmas com base em filtros de esporte e categoria.
-    """
-    query = {}
-    if 'esporte_id' in filtros:
-        query['esporte_id'] = ObjectId(filtros['esporte_id'])
-    if 'categoria' in filtros:
-        query['categoria'] = filtros['categoria']
-    
-    turmas = list(mongo.db.turmas.find(query))
-    return turmas
-
-def encontrar_turma_por_id(turma_id):
-    """
-    Encontra uma turma específica pelo ID, com dados populados.
-    """
-    try:
-        pipeline = _get_aggregation_pipeline(turma_id)
-        resultado = list(mongo.db.turmas.aggregate(pipeline))
-        return resultado[0] if resultado else None
-    except Exception:
+def buscar_turma_por_id(turma_id):
+    """Busca uma turma específica pelo seu ID com dados agregados."""
+    object_id = _converter_para_objectid(turma_id, "ID da Turma")
+    pipeline = [
+        {'$match': {'_id': object_id}},
+        {'$lookup': {'from': 'esportes', 'localField': 'esporte_id', 'foreignField': '_id', 'as': 'esporte'}},
+        {'$lookup': {'from': 'usuarios', 'localField': 'professor_id', 'foreignField': '_id', 'as': 'professor'}},
+        {'$lookup': {'from': 'usuarios', 'localField': 'alunos_ids', 'foreignField': '_id', 'as': 'alunos'}},
+        {'$unwind': {'path': '$esporte', 'preserveNullAndEmptyArrays': True}},
+        {'$unwind': {'path': '$professor', 'preserveNullAndEmptyArrays': True}},
+        {
+            '$project': {
+                'nome': 1, 'categoria': 1, 'horarios': 1,
+                'esporte': {'_id': '$esporte._id', 'nome': '$esporte.nome'},
+                'professor': {'_id': '$professor._id', 'nome_completo': '$professor.nome_completo', 'email': '$professor.email'},
+                'alunos': '$alunos'
+            }
+        }
+    ]
+    turmas = list(mongo.db.turmas.aggregate(pipeline))
+    if not turmas:
         return None
+    return turmas[0]
 
-def atualizar_turma(turma_id, dados_atualizacao):
-    """
-    Atualiza os dados de uma turma.
-    """
-    try:
-        obj_id = ObjectId(turma_id)
-    except Exception:
-        raise ValueError("ID de turma inválido.")
+def atualizar_turma(turma_id, dados):
+    """Atualiza os dados de uma turma."""
+    object_id = _converter_para_objectid(turma_id, "ID da Turma")
+    turma_antiga = mongo.db.turmas.find_one({'_id': object_id})
+    if not turma_antiga:
+        raise ValueError("Turma não encontrada.")
 
-    update_fields = {}
+    # Mescla os dados antigos com os novos para não perder campos
+    dados_completos = turma_antiga.copy()
+    dados_completos.update(dados)
     
-    # Lista de campos que podem ser atualizados
-    campos_permitidos = ['nome', 'descricao', 'horarios', 'categoria', 'alunos_ids']
-    for campo in campos_permitidos:
-        if campo in dados_atualizacao:
-            if campo == 'alunos_ids':
-                # Garante que os IDs dos alunos sejam convertidos para ObjectId
-                update_fields[campo] = [ObjectId(aid) for aid in dados_atualizacao[campo]]
-            else:
-                update_fields[campo] = dados_atualizacao[campo]
+    # Converte os IDs de volta para string para validação, se necessário
+    dados_completos['esporte_id'] = str(dados_completos['esporte_id'])
+    dados_completos['professor_id'] = str(dados_completos['professor_id'])
+    dados_completos['alunos_ids'] = [str(aid) for aid in dados_completos.get('alunos_ids', [])]
 
-    # Valida o professor_id APENAS se ele for enviado nos dados de atualização
-    if 'professor_id' in dados_atualizacao and dados_atualizacao['professor_id']:
-        professor_id = dados_atualizacao['professor_id']
-        _validar_ids_usuarios(professor_id, []) # Valida só o professor
-        update_fields['professor_id'] = ObjectId(professor_id)
 
-    if not update_fields:
-        return 0
+    _validar_dados_turma(dados_completos)
+    dados_para_atualizar = _preparar_documento_turma(dados_completos)
 
-    resultado = mongo.db.turmas.update_one({"_id": obj_id}, {"$set": update_fields})
-    return resultado.modified_count
+    mongo.db.turmas.update_one({'_id': object_id}, {'$set': dados_para_atualizar})
+
+    # Lógica de desvincular/vincular professor e alunos
+    prof_antigo_id = str(turma_antiga.get('professor_id'))
+    prof_novo_id = dados_completos.get('professor_id')
+    if prof_antigo_id != prof_novo_id:
+        if prof_antigo_id:
+            _desvincular_professor_de_turmas(prof_antigo_id, [turma_id])
+        if prof_novo_id:
+            _vincular_professor_a_turmas(prof_novo_id, [turma_id])
+            
+    alunos_antigos_ids = {str(aid) for aid in turma_antiga.get('alunos_ids', [])}
+    alunos_novos_ids = set(dados_completos.get('alunos_ids', []))
+
+    alunos_a_remover = list(alunos_antigos_ids - alunos_novos_ids)
+    alunos_a_adicionar = list(alunos_novos_ids - alunos_antigos_ids)
+
+    if alunos_a_remover:
+        _desvincular_alunos_de_turma(alunos_a_remover, turma_id)
+    if alunos_a_adicionar:
+        _vincular_alunos_a_turma(alunos_a_adicionar, turma_id)
+
+    current_app.logger.info(f"Turma ID {turma_id} atualizada com sucesso.")
+    return True
 
 def deletar_turma(turma_id):
-    """
-    Deleta uma turma permanentemente.
-    """
-    try:
-        obj_id = ObjectId(turma_id)
-        resultado = mongo.db.turmas.delete_one({"_id": obj_id})
-        return resultado.deleted_count
-    except Exception:
-        return 0
-        
-def adicionar_aluno(turma_id, aluno_id):
-    """Adiciona um aluno a uma turma, evitando duplicatas."""
-    aluno = mongo.db.usuarios.find_one({"_id": ObjectId(aluno_id), "perfil": "aluno", "ativo": True})
-    if not aluno:
-        raise ValueError("Aluno não encontrado, inativo ou com perfil incorreto.")
+    object_id = _converter_para_objectid(turma_id, "ID da Turma")
+    turma_deletada = mongo.db.turmas.find_one_and_delete({'_id': object_id})
+    if not turma_deletada:
+        raise ValueError("Turma não encontrada para deletar.")
 
-    resultado = mongo.db.turmas.update_one(
-        {"_id": ObjectId(turma_id)},
-        {"$addToSet": {"alunos_ids": ObjectId(aluno_id)}}
+    professor_id = str(turma_deletada.get('professor_id'))
+    alunos_ids = [str(aid) for aid in turma_deletada.get('alunos_ids', [])]
+
+    if professor_id:
+        _desvincular_professor_de_turmas(professor_id, [turma_id])
+    if alunos_ids:
+        _desvincular_alunos_de_turma(alunos_ids, turma_id)
+
+    current_app.logger.info(f"Turma ID {turma_id} e suas referências foram deletadas.")
+    return True
+
+# --- Funções de Vinculação ---
+# (As funções de vinculação permanecem as mesmas)
+
+def _vincular_professor_a_turmas(prof_id_str, turmas_ids_str):
+    if not prof_id_str or not turmas_ids_str: return
+    prof_obj_id = _converter_para_objectid(prof_id_str, "ID do Professor")
+    turmas_obj_ids = [_converter_para_objectid(tid, "ID da Turma") for tid in turmas_ids_str]
+    mongo.db.usuarios.update_one(
+        {'_id': prof_obj_id},
+        {'$addToSet': {'turmas_ids': {'$each': turmas_obj_ids}}}
     )
-    return resultado.modified_count
 
-def remover_aluno(turma_id, aluno_id):
-    """Remove um aluno de uma turma."""
-    resultado = mongo.db.turmas.update_one(
-        {"_id": ObjectId(turma_id)},
-        {"$pull": {"alunos_ids": ObjectId(aluno_id)}}
+def _desvincular_professor_de_turmas(prof_id_str, turmas_ids_str):
+    if not prof_id_str or not turmas_ids_str: return
+    prof_obj_id = _converter_para_objectid(prof_id_str, "ID do Professor")
+    turmas_obj_ids = [_converter_para_objectid(tid, "ID da Turma") for tid in turmas_ids_str]
+    mongo.db.usuarios.update_one(
+        {'_id': prof_obj_id},
+        {'$pullAll': {'turmas_ids': turmas_obj_ids}}
     )
-    return resultado.modified_count
 
-def listar_turmas_por_professor(professor_id):
-    """
-    Busca no banco todas as turmas de um professor específico,
-    usando o pipeline de agregação para popular os dados.
-    """
-    # Reutilizamos a lógica do pipeline, adicionando um filtro ($match) no início
-    pipeline = _get_aggregation_pipeline()
-    pipeline.insert(0, {"$match": {"professor_id": ObjectId(professor_id)}})
+def _vincular_alunos_a_turma(alunos_ids_str, turma_id_str):
+    if not alunos_ids_str or not turma_id_str: return
+    alunos_obj_ids = [_converter_para_objectid(aid, "ID do Aluno") for aid in alunos_ids_str]
+    turma_obj_id = _converter_para_objectid(turma_id_str, "ID da Turma")
+    mongo.db.usuarios.update_many(
+        {'_id': {'$in': alunos_obj_ids}},
+        {'$addToSet': {'turma_id': turma_obj_id}} # Assume que um aluno só pode estar em uma turma por vez
+    )
 
-    return list(mongo.db.turmas.aggregate(pipeline))
+def _desvincular_alunos_de_turma(alunos_ids_str, turma_id_str):
+    if not alunos_ids_str or not turma_id_str: return
+    alunos_obj_ids = [_converter_para_objectid(aid, "ID do Aluno") for aid in alunos_ids_str]
+    turma_obj_id = _converter_para_objectid(turma_id_str, "ID da Turma")
+    mongo.db.usuarios.update_many(
+        {'_id': {'$in': alunos_obj_ids}},
+        {'$pull': {'turma_id': turma_obj_id}}
+    )

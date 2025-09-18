@@ -1,12 +1,10 @@
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import get_jwt_identity
 from app.services import turma_service
-from app.decorators.auth_decorators import admin_required
-from bson import ObjectId, json_util
+from app.decorators.auth_decorators import admin_required, role_required
+from bson import json_util
 import json
 import traceback
-from app import mongo
-from app.decorators.auth_decorators import admin_required, role_required
 
 # Cria o Blueprint para as rotas de turma
 turma_bp = Blueprint('turma_bp', __name__)
@@ -18,10 +16,7 @@ def handle_turma_preflight():
     cheguem aos decorators de autenticação, evitando o erro de JWT.
     """
     if request.method.upper() == 'OPTIONS':
-        # O flask-cors adicionará os cabeçalhos corretos.
-        # Nós apenas precisamos retornar uma resposta vazia e bem-sucedida.
         return '', 204
-
 
 @turma_bp.route('/', methods=['POST'])
 @admin_required()
@@ -32,17 +27,16 @@ def criar_nova_turma():
     dados = request.get_json()
     print(f"DEBUG: Dados recebidos para criar turma: {dados}")
 
-    if not dados or not all(k in dados for k in ('nome', 'professor_id', 'esporte_id', 'categoria')):
-        return jsonify({"mensagem": "Nome, professor_id, esporte_id e categoria são obrigatórios."}), 400
-    
     try:
         turma_id = turma_service.criar_turma(dados)
         return jsonify({"mensagem": "Turma criada com sucesso!", "turma_id": str(turma_id)}), 201
+    except ValueError as ve:
+        # Erro de validação tratado no service, como "campos ausentes"
+        print(f"!!!!!!!!!! ERRO DE VALIDAÇÃO AO CRIAR TURMA !!!!!!!!!!\n{ve}")
+        return jsonify({"mensagem": str(ve)}), 400
     except Exception as e:
-        print(f"!!!!!!!!!! ERRO AO CRIAR TURMA !!!!!!!!!!")
-        print(e)
+        print(f"!!!!!!!!!! ERRO INTERNO AO CRIAR TURMA !!!!!!!!!!")
         traceback.print_exc()
-        print(f"!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
         return jsonify({"mensagem": f"Erro interno no servidor: {e}"}), 500
 
 @turma_bp.route('/', methods=['GET'])
@@ -65,6 +59,7 @@ def obter_todas_turmas():
     else:
         turmas = turma_service.listar_turmas_filtradas(filtros)
         
+    # Usar json_util para serializar corretamente os tipos do MongoDB (ObjectId, etc.)
     return json.loads(json_util.dumps(turmas)), 200
 
 @turma_bp.route('/<string:turma_id>', methods=['GET'])
@@ -73,10 +68,18 @@ def obter_turma_por_id(turma_id):
     """
     [ADMIN] Endpoint para obter detalhes de uma turma específica.
     """
-    turma = turma_service.encontrar_turma_por_id(turma_id)
-    if not turma:
-        return jsonify({"mensagem": "Turma não encontrada."}), 404
-    return json.loads(json_util.dumps(turma)), 200
+    try:
+        # ✅ CORREÇÃO APLICADA AQUI
+        # O nome da função foi corrigido de 'encontrar_turma_por_id' para 'buscar_turma_por_id'.
+        turma = turma_service.buscar_turma_por_id(turma_id)
+        if not turma:
+            return jsonify({"mensagem": "Turma não encontrada."}), 404
+        return json.loads(json_util.dumps(turma)), 200
+    except ValueError as e:
+        return jsonify({"mensagem": str(e)}), 400
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"mensagem": f"Erro interno no servidor: {e}"}), 500
 
 @turma_bp.route('/<string:turma_id>', methods=['PUT'])
 @admin_required()
@@ -86,20 +89,29 @@ def atualizar_turma_existente(turma_id):
     """
     dados = request.get_json()
     try:
-        modificados = turma_service.atualizar_turma(turma_id, dados)
-        if modificados > 0:
+        sucesso = turma_service.atualizar_turma(turma_id, dados)
+        if sucesso:
             return jsonify({"mensagem": "Turma atualizada com sucesso."}), 200
-        return jsonify({"mensagem": "Nenhuma alteração realizada ou turma não encontrada."}), 304
+        # O serviço agora levanta exceção se a turma não for encontrada
+        return jsonify({"mensagem": "Nenhuma alteração necessária."}), 304
     except ValueError as e:
         return jsonify({"mensagem": str(e)}), 400
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"mensagem": f"Erro interno no servidor: {e}"}), 500
 
 @turma_bp.route('/<string:turma_id>', methods=['DELETE'])
 @admin_required()
 def deletar_turma_existente(turma_id):
-    deletados = turma_service.deletar_turma(turma_id)
-    if deletados > 0:
-        return '', 204
-    return jsonify({"mensagem": "Turma não encontrada."}), 404
+    try:
+        sucesso = turma_service.deletar_turma(turma_id)
+        if sucesso:
+            return '', 204
+    except ValueError as e:
+        return jsonify({"mensagem": str(e)}), 404
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"mensagem": f"Erro interno no servidor: {e}"}), 500
 
 # --- Rotas específicas para gerenciar alunos em uma turma ---
 
@@ -125,8 +137,8 @@ def remover_aluno_da_turma(turma_id, aluno_id):
         return jsonify({"mensagem": "Aluno removido com sucesso."}), 200
     return jsonify({"mensagem": "Aluno não encontrado na turma ou turma não encontrada."}), 404
 
-@turma_bp.route('/professor/me', methods=['GET', 'OPTIONS'])
-@role_required(roles=['professor', 'admin']) # Permite que admins também usem, se necessário
+@turma_bp.route('/professor/me', methods=['GET'])
+@role_required(roles=['professor', 'admin'])
 def get_minhas_turmas():
     """
     Retorna apenas as turmas associadas ao professor logado.

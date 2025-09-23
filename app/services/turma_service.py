@@ -2,6 +2,7 @@ from bson import ObjectId
 from pymongo.errors import WriteError
 from flask import current_app
 from app import mongo
+from app.services import aula_service
 
 def _validar_campos_obrigatorios(dados, campos):
     """
@@ -64,27 +65,25 @@ def _preparar_documento_turma(dados):
 # --- Lógica de Negócio ---
 
 def criar_turma(dados):
-    """
-    Cria uma nova turma, valida os dados, insere no banco e atualiza
-    os documentos relacionados (professor e alunos).
-    """
     try:
         _validar_dados_turma(dados)
         dados_turma_para_inserir = _preparar_documento_turma(dados)
-
         resultado = mongo.db.turmas.insert_one(dados_turma_para_inserir)
         nova_turma_id = resultado.inserted_id
         current_app.logger.info(f"Turma '{dados['nome']}' criada com sucesso. ID: {nova_turma_id}")
 
+        # Vinculações
         professor_id = str(dados_turma_para_inserir['professor_id'])
         alunos_ids = [str(aluno_id) for aluno_id in dados_turma_para_inserir['alunos_ids']]
-
         _vincular_professor_a_turmas(professor_id, [str(nova_turma_id)])
         _vincular_alunos_a_turma(alunos_ids, str(nova_turma_id))
+        
+        # ✅ LÓGICA AUTOMÁTICA ADICIONADA
+        # Gera as aulas para o mês corrente assim que a turma é criada.
+        aula_service.agendar_aulas_do_mes(str(nova_turma_id))
 
         return str(nova_turma_id)
-
-    except (ValueError, WriteError) as e:
+    except Exception as e:
         current_app.logger.error(f"!!!!!!!!!! ERRO AO CRIAR TURMA !!!!!!!!!!\n{e}\n!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
         raise e
     except Exception as e:

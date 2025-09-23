@@ -1,3 +1,5 @@
+# app/__init__.py
+
 from flask import Flask
 from flask_pymongo import PyMongo
 from flask_cors import CORS
@@ -5,6 +7,7 @@ from flask_jwt_extended import JWTManager
 from config import Config
 import pytz
 
+# A instância do Mongo é criada aqui para ser importada por outros módulos
 mongo = PyMongo()
 timezone = None
 
@@ -13,12 +16,14 @@ def criar_app():
     app.config.from_object(Config)
     app.config["JWT_SECRET_KEY"] = app.config["SECRET_KEY"]
 
-
+    app.url_map.strict_slashes = False
+    
     origins = [
-        r"http://localhost:.*", # Para desenvolvimento local
-        "https://ciaf-gestao.netlify.app" # URL de produção
+        r"http://localhost:.*",
+        "https://ciaf-gestao.netlify.app"
     ]
     CORS(app, resources={r"/api/*": {"origins": origins}}, supports_credentials=True)
+    # ----------------------------------------------------
 
     mongo.init_app(app)
     jwt = JWTManager(app)
@@ -27,7 +32,7 @@ def criar_app():
     timezone = pytz.timezone(app.config['TIMEZONE'])
 
     with app.app_context():
-        # Imports e registros dos blueprints...
+        # Imports e registros dos blueprints
         from .routes.health_check import health_check_bp
         from .routes.auth_routes import auth_bp
         from .routes.usuario_routes import usuario_bp

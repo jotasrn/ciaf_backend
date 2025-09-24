@@ -119,31 +119,70 @@ def listar_aulas_por_data(data_filtro):
 
 def buscar_detalhes_aula(aula_id):
     """
-    Busca uma aula e popula os dados dos alunos e suas presenças.
-    Query robusta que lida com alunos sem registro de presença.
+    Busca uma aula e popula TODOS os dados necessários para relatórios e visualização.
+    Esta é uma query de agregação robusta que lida com todos os relacionamentos.
     """
+    try:
+        aula_obj_id = ObjectId(aula_id)
+    except Exception:
+        raise ValueError("ID de aula inválido.")
+
     pipeline = [
-        {"$match": {"_id": ObjectId(aula_id)}},
-        {"$lookup": {"from": "turmas", "localField": "turma_id", "foreignField": "_id", "as": "turma"}},
-        {"$unwind": "$turma"},
-        {"$lookup": {"from": "usuarios", "localField": "turma.alunos_ids", "foreignField": "_id", "as": "alunos"}},
-        {
-            "$project": {
-                "data": 1, "status": 1, "observacoes": 1,
-                "alunos": {
-                    "$map": {
-                        "input": "$alunos",
-                        "as": "aluno",
-                        "in": {
-                            "_id": "$$aluno._id",
-                            "nome_completo": "$$aluno.nome_completo",
-                            "email": "$$aluno.email"
-                        }
+        # 1. Encontra a aula específica
+        {"$match": {"_id": aula_obj_id}},
+        
+        # 2. Junta os dados da Turma
+        {"$lookup": {"from": "turmas", "localField": "turma_id", "foreignField": "_id", "as": "turma_info"}},
+        {"$unwind": "$turma_info"},
+
+        # 3. Junta os dados do Esporte (a partir da turma)
+        {"$lookup": {"from": "esportes", "localField": "turma_info.esporte_id", "foreignField": "_id", "as": "esporte_info"}},
+        {"$unwind": {"path": "$esporte_info", "preserveNullAndEmptyArrays": True}},
+
+        # 4. Junta os dados do Professor (a partir da turma)
+        {"$lookup": {"from": "usuarios", "localField": "turma_info.professor_id", "foreignField": "_id", "as": "professor_info"}},
+        {"$unwind": {"path": "$professor_info", "preserveNullAndEmptyArrays": True}},
+        
+        # 5. Desagrupa os IDs dos alunos para processar um por um
+        {"$unwind": {"path": "$turma_info.alunos_ids", "preserveNullAndEmptyArrays": True}},
+        
+        # 6. Junta os dados de cada Aluno
+        {"$lookup": {"from": "usuarios", "localField": "turma_info.alunos_ids", "foreignField": "_id", "as": "aluno_info"}},
+        {"$unwind": {"path": "$aluno_info", "preserveNullAndEmptyArrays": True}},
+        
+        # 7. Junta o registro de Presença para cada aluno nesta aula
+        {"$lookup": {
+            "from": "presencas",
+            "let": {"aluno_id": "$aluno_info._id", "aula_id": "$_id"},
+            "pipeline": [
+                {"$match": {"$expr": {"$and": [{"$eq": ["$aluno_id", "$$aluno_id"]}, {"$eq": ["$aula_id", "$$aula_id"]}]}}},
+                {"$limit": 1}
+            ],
+            "as": "presenca_info"
+        }},
+        {"$unwind": {"path": "$presenca_info", "preserveNullAndEmptyArrays": True}},
+        
+        # 8. Agrupa tudo de volta, criando uma lista de alunos com seus status
+        {"$group": {
+            "_id": "$_id",
+            "data": {"$first": "$data"},
+            "status": {"$first": "$status"},
+            "turma_nome": {"$first": "$turma_info.nome"},
+            "categoria": {"$first": "$turma_info.categoria"},
+            "esporte": {"$first": "$esporte_info.nome"},
+            "professor": {"$first": "$professor_info.nome_completo"},
+            "alunos": {
+                "$push": {
+                    "nome_completo": "$aluno_info.nome_completo",
+                    "presenca": {
+                        "status": {"$ifNull": ["$presenca_info.status", "pendente"]},
+                        "observacao": {"$ifNull": ["$presenca_info.observacao", ""]}
                     }
                 }
             }
-        }
+        }}
     ]
+    
     resultado = list(mongo.db.aulas.aggregate(pipeline))
     return resultado[0] if resultado else None
 

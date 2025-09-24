@@ -4,11 +4,7 @@ import openpyxl
 from openpyxl.styles import Font, Alignment
 from flask import render_template
 from weasyprint import HTML
-
-# Importamos os outros services dos quais este depende para buscar dados
 from app.services import aula_service
-from app.services import turma_service # Usado como fallback caso 'professor' não venha nos dados da aula
-
 
 def _ajustar_largura_colunas(sheet):
     """
@@ -17,34 +13,30 @@ def _ajustar_largura_colunas(sheet):
     """
     for col in sheet.columns:
         max_length = 0
-        column = col[0].column_letter # Pega a letra da coluna (A, B, C...)
+        column = col[0].column_letter
         for cell in col:
             try:
                 if len(str(cell.value)) > max_length:
                     max_length = len(str(cell.value))
             except:
                 pass
-        # Adiciona um pouco de espaço extra para não ficar muito apertado
         adjusted_width = (max_length + 2)
         sheet.column_dimensions[column].width = adjusted_width
 
-
 def gerar_planilha_presenca_aula(aula_id):
     """
-    Gera uma planilha Excel (.xlsx) da lista de presença de uma aula.
-    Retorna um stream de bytes em memória e o nome do arquivo sugerido.
+    Gera uma planilha Excel (.xlsx) da lista de presença de uma aula com dados completos.
     """
-    # 1. Reutilizamos nosso service para buscar todos os dados necessários de uma vez
+    # 1. Usa a função de busca de dados robusta que já implementamos
     dados_aula = aula_service.buscar_detalhes_aula(aula_id)
     if not dados_aula:
         return None, None
 
-    # 2. Criação da planilha em memória
     workbook = openpyxl.Workbook()
     sheet = workbook.active
     sheet.title = "Lista de Presença"
 
-    # 3. Adiciona um cabeçalho informativo ao relatório
+    # 3. Adiciona um cabeçalho informativo completo ao relatório
     sheet['A1'] = 'Relatório de Presença'
     sheet['A1'].font = Font(bold=True, size=16)
     
@@ -52,12 +44,19 @@ def gerar_planilha_presenca_aula(aula_id):
     sheet['B3'] = dados_aula.get('turma_nome', 'N/A')
     sheet['A4'] = 'Data da Aula:'
     sheet['B4'] = dados_aula.get('data').strftime('%d/%m/%Y') if dados_aula.get('data') else 'N/A'
-    sheet['A3'].font = Font(bold=True)
-    sheet['A4'].font = Font(bold=True)
+    sheet['A5'] = 'Esporte:'
+    sheet['B5'] = dados_aula.get('esporte', 'N/A')
+    sheet['A6'] = 'Categoria:'
+    sheet['B6'] = dados_aula.get('categoria', 'N/A')
+    sheet['A7'] = 'Professor:'
+    sheet['B7'] = dados_aula.get('professor', 'N/A')
+
+    for cell_coord in ['A3', 'A4', 'A5', 'A6', 'A7']:
+        sheet[cell_coord].font = Font(bold=True)
 
     # 4. Adiciona os cabeçalhos da tabela de dados
+    sheet.append([]) # Linha em branco para espaçamento
     headers = ['Nome do Aluno', 'Status da Presença', 'Observação']
-    sheet.append([]) # Adiciona uma linha em branco para espaçamento
     sheet.append(headers)
     header_row = sheet.max_row
     for cell in sheet[header_row]:
@@ -73,8 +72,7 @@ def gerar_planilha_presenca_aula(aula_id):
     }
     
     alunos = dados_aula.get('alunos', [])
-    # Ordena a lista de alunos por nome para um relatório mais organizado
-    for aluno in sorted(alunos, key=lambda x: x['nome_completo']):
+    for aluno in sorted(alunos, key=lambda x: x.get('nome_completo', '')):
         status = aluno.get('presenca', {}).get('status', 'pendente')
         observacao = aluno.get('presenca', {}).get('observacao', '') or ''
         
@@ -85,51 +83,43 @@ def gerar_planilha_presenca_aula(aula_id):
         ]
         sheet.append(row)
 
-    # 6. Aplica estilo final, como o ajuste de colunas
+    # 6. Estilo final
     _ajustar_largura_colunas(sheet)
 
-    # 7. Salva o arquivo em um stream de bytes na memória
+    # 7. Salva o arquivo em memória
     file_stream = io.BytesIO()
     workbook.save(file_stream)
-    file_stream.seek(0) # Essencial: move o cursor para o início do stream para a leitura
+    file_stream.seek(0)
 
-    # 8. Gera um nome de arquivo dinâmico e seguro
     nome_turma_safe = "".join(c for c in dados_aula.get('turma_nome', 'Turma') if c.isalnum() or c in (' ', '-')).rstrip()
-    data_safe = dados_aula.get('data').strftime('%Y-%m-%d')
+    data_safe = dados_aula.get('data').strftime('%Y-%m-%d') if dados_aula.get('data') else ''
     nome_arquivo = f"Presenca_{nome_turma_safe}_{data_safe}.xlsx"
 
     return file_stream, nome_arquivo
 
-
 def gerar_pdf_presenca_aula(aula_id):
     """
     Gera um relatório PDF da lista de presença de uma aula.
-    Retorna um stream de bytes em memória e o nome do arquivo sugerido.
     """
-    # 1. Reutilizamos o mesmo service para buscar os dados
+    # 1. Usa a mesma função de busca de dados robusta
     dados_aula = aula_service.buscar_detalhes_aula(aula_id)
     if not dados_aula:
         return None, None
         
-    # O pipeline de agregação já nos traz o professor, mas garantimos aqui
-    if 'professor' not in dados_aula:
-        turma_completa = turma_service.encontrar_turma_por_id(dados_aula['turma_id'])
-        dados_aula['professor'] = turma_completa.get('professor', {}) if turma_completa else {}
-
-    # 2. Renderiza o template HTML com os dados
+    # 2. Renderiza o template HTML (ele já espera os dados completos)
     html_renderizado = render_template(
         'relatorios/relatorio_presenca.html',
         dados=dados_aula,
         data_geracao=datetime.datetime.now()
     )
 
-    # 3. Converte o HTML para PDF em memória usando WeasyPrint
+    # 3. Converte para PDF
     pdf_bytes = HTML(string=html_renderizado).write_pdf()
     file_stream = io.BytesIO(pdf_bytes)
 
-    # 4. Gera um nome de arquivo dinâmico e seguro
+    # 4. Gera o nome do arquivo
     nome_turma_safe = "".join(c for c in dados_aula.get('turma_nome', 'Turma') if c.isalnum() or c in (' ', '-')).rstrip()
-    data_safe = dados_aula.get('data').strftime('%Y-%m-%d')
+    data_safe = dados_aula.get('data').strftime('%Y-%m-%d') if dados_aula.get('data') else ''
     nome_arquivo = f"Presenca_{nome_turma_safe}_{data_safe}.pdf"
 
     return file_stream, nome_arquivo

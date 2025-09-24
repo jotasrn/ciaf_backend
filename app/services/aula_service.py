@@ -149,27 +149,63 @@ def buscar_detalhes_aula(aula_id):
 
 # Funções relacionadas à presença
 def marcar_presenca_lote(aula_id, lista_presencas):
-    """Cria ou atualiza múltiplos registros de presença para uma aula."""
-    aula_obj_id = ObjectId(aula_id)
+    """
+    Cria ou atualiza múltiplos registros de presença para uma aula de forma robusta.
+    """
+    try:
+        aula_obj_id = ObjectId(aula_id)
+    except Exception:
+        raise ValueError(f"ID da aula inválido: {aula_id}")
+
+    aula = mongo.db.aulas.find_one({"_id": aula_obj_id}, {"turma_id": 1})
+    if not aula:
+        raise ValueError(f"Aula com ID {aula_id} não foi encontrada.")
+    turma_id = aula.get('turma_id')
+    if not turma_id:
+        raise ValueError(f"A aula {aula_id} não está vinculada a nenhuma turma.")
+
     agora = datetime.utcnow()
-    
-    operacoes = [
-        UpdateOne(
-            {"aula_id": aula_obj_id, "aluno_id": ObjectId(p['aluno_id'])},
-            {"$set": {"status": p['status'], "data_registro": agora}},
+    operacoes = []
+
+    for presenca in lista_presencas:
+        aluno_id_str = presenca.get('aluno_id')
+        status = presenca.get('status')
+        if not aluno_id_str or not status:
+            current_app.logger.warning(f"Registro de presença ignorado: {presenca}")
+            continue
+        
+        try:
+            aluno_obj_id = ObjectId(aluno_id_str)
+        except Exception:
+            current_app.logger.warning(f"ID de aluno inválido ignorado: {aluno_id_str}")
+            continue
+
+        operacao = UpdateOne(
+            {"aula_id": aula_obj_id, "aluno_id": aluno_obj_id},
+            {
+                "$set": {
+                    "status": status,
+                    "data_modificacao": agora
+                },
+                "$setOnInsert": {
+                    "turma_id": turma_id,
+                    "data_criacao": agora
+                }
+            },
             upsert=True
-        ) for p in lista_presencas
-    ]
+        )
+        operacoes.append(operacao)
 
     if not operacoes:
         return 0
 
     resultado = mongo.db.presencas.bulk_write(operacoes)
     
-    # Atualiza o status da aula para "realizada" após a chamada.
+    # --- CORREÇÃO APLICADA AQUI ---
+    # O status agora é enviado em minúsculas para corresponder à regra do banco.
     mongo.db.aulas.update_one(
         {"_id": aula_obj_id},
-        {"$set": {"status": "Realizada", "data_modificacao": agora}}
+        {"$set": {"status": "realizada", "data_modificacao": agora}}
     )
     
     return resultado.upserted_count + resultado.modified_count

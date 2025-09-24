@@ -235,3 +235,56 @@ def _desvincular_alunos_de_turma(alunos_ids_str, turma_id_str):
         {'_id': {'$in': alunos_obj_ids}},
         {'$pull': {'turma_id': turma_obj_id}}
     )
+
+def listar_turmas_por_professor(professor_id_str):
+    """
+    Lista as turmas de um professor específico com informações agregadas.
+    """
+    try:
+        professor_obj_id = _converter_para_objectid(professor_id_str, "ID do Professor")
+    except ValueError as e:
+        current_app.logger.error(f"ID de professor inválido ao listar turmas: {e}")
+        return []
+
+    pipeline = [
+        {'$match': {'professor_id': professor_obj_id}},  # Filtro principal
+        {'$lookup': {
+            'from': 'esportes', 
+            'localField': 'esporte_id', 
+            'foreignField': '_id', 
+            'as': 'esporte'
+        }},
+        {'$lookup': {
+            'from': 'usuarios', 
+            'localField': 'professor_id', 
+            'foreignField': '_id', 
+            'as': 'professor'
+        }},
+        {'$lookup': {
+            'from': 'usuarios', 
+            'localField': 'alunos_ids', 
+            'foreignField': '_id', 
+            'as': 'alunos'
+        }},
+        {'$unwind': {'path': '$esporte', 'preserveNullAndEmptyArrays': True}},
+        {'$unwind': {'path': '$professor', 'preserveNullAndEmptyArrays': True}},
+        {
+            '$project': {
+                'nome': 1, 'categoria': 1, 'horarios': 1,
+                'esporte': {'_id': '$esporte._id', 'nome': '$esporte.nome'},
+                'professor': {'_id': '$professor._id', 'nome_completo': '$professor.nome_completo'},
+                'alunos': {
+                    '$map': {
+                        'input': '$alunos',
+                        'as': 'aluno',
+                        'in': {'_id': '$$aluno._id', 'nome_completo': '$$aluno.nome_completo'}
+                    }
+                },
+                'total_alunos': {'$size': '$alunos_ids'}
+            }
+        }
+    ]
+    
+    turmas = list(mongo.db.turmas.aggregate(pipeline))
+    current_app.logger.info(f"Encontradas {len(turmas)} turmas para o professor ID {professor_id_str}")
+    return turmas

@@ -53,6 +53,7 @@ def criar_app():
         from .routes.aula_routes import aula_bp
         from .routes.dashboard_routes import dashboard_bp
         from .routes.categoria_routes import categoria_bp 
+        from .routes.presenca_routes import presenca_bp
 
         app.register_blueprint(health_check_bp, url_prefix='/api')
         app.register_blueprint(auth_bp, url_prefix='/api/auth')
@@ -62,5 +63,6 @@ def criar_app():
         app.register_blueprint(aula_bp, url_prefix='/api/aulas')
         app.register_blueprint(dashboard_bp, url_prefix='/api/dashboard')
         app.register_blueprint(categoria_bp, url_prefix='/api/categorias')
+        app.register_blueprint(presenca_bp, url_prefix='/api/presencas')
 
     return app

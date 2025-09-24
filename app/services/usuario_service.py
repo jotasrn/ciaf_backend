@@ -45,42 +45,38 @@ def _vincular_professor_a_turmas(professor_id, turmas_ids):
 
 def criar_usuario(dados_usuario):
     """
-    Cria um novo usuário e, se aplicável, o vincula a turmas.
+    Cria um novo usuário e inicializa campos padrão dependendo do perfil.
     """
-    usuarios_collection = mongo.db.usuarios
-    if usuarios_collection.find_one({"email": dados_usuario['email']}):
+    if mongo.db.usuarios.find_one({"email": dados_usuario['email']}):
         raise ValueError("O e-mail informado já está em uso.")
-
-    senha_texto_puro = dados_usuario.get('senha', 'senhaPadrao123').encode('utf-8')
-    senha_hash = bcrypt.hashpw(senha_texto_puro, bcrypt.gensalt())
-
+    
+    senha_hash = bcrypt.hashpw(dados_usuario['senha'].encode('utf-8'), bcrypt.gensalt())
+    
     novo_usuario = {
         "nome_completo": dados_usuario['nome_completo'],
         "email": dados_usuario['email'],
-        "senha_hash": senha_hash.decode('utf-8'),
-        "perfil": dados_usuario.get('perfil', 'aluno'),
-        "data_nascimento": datetime.datetime.fromisoformat(dados_usuario['data_nascimento']) if dados_usuario.get('data_nascimento') else None,
+        "senha_hash": senha_hash, # Salva como bytes, é mais seguro
+        "perfil": dados_usuario.get('perfil'),
         "ativo": True,
         "data_criacao": datetime.datetime.utcnow(),
-        "data_matricula": datetime.datetime.fromisoformat(dados_usuario.get('data_matricula')) if dados_usuario.get('data_matricula') else None,
-        "contato_responsavel": dados_usuario.get('contato_responsavel', {})
     }
-    
-    resultado = usuarios_collection.insert_one(novo_usuario)
-    novo_id = resultado.inserted_id
 
-    # Lógica de vínculo com a turma após a criação do usuário
+    # --- CORREÇÃO E MELHORIA APLICADA AQUI ---
     if novo_usuario['perfil'] == 'aluno':
-        turma_id = dados_usuario.get('turma_id')
-        if turma_id:
-            _adicionar_aluno_a_turma(novo_id, turma_id)
-    
-    elif novo_usuario['perfil'] == 'professor':
-        turmas_ids = dados_usuario.get('turmas_ids')
-        if turmas_ids:
-            _vincular_professor_a_turmas(novo_id, turmas_ids)
+        if 'data_nascimento' in dados_usuario and dados_usuario['data_nascimento']:
+            novo_usuario['data_nascimento'] = datetime.datetime.fromisoformat(dados_usuario['data_nascimento'])
+        
+        # Inicializa o status de pagamento para todo novo aluno
+        novo_usuario['status_pagamento'] = {
+            'status': 'pendente',
+            'data_vencimento': None,
+            'data_ultimo_pagamento': None
+        }
+        novo_usuario['telefone'] = dados_usuario.get('telefone')
+        novo_usuario['responsavel'] = dados_usuario.get('responsavel')
 
-    return novo_id
+    resultado = mongo.db.usuarios.insert_one(novo_usuario)
+    return str(resultado.inserted_id)
 
 def atualizar_usuario(usuario_id, dados_atualizacao):
     """

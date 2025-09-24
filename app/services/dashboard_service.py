@@ -9,18 +9,18 @@ def get_summary_data():
     try:
         total_alunos = mongo.db.usuarios.count_documents({"perfil": "aluno", "ativo": True})
         total_turmas = mongo.db.turmas.count_documents({})
-        total_nao_pagantes = mongo.db.usuarios.count_documents({
+        
+        # CORREÇÃO APLICADA AQUI: O nome da chave foi alinhado com o frontend.
+        total_inadimplentes = mongo.db.usuarios.count_documents({
             "perfil": "aluno",
             "ativo": True,
             "status_pagamento.status": {"$ne": "pago"}
         })
         
-        # Futuramente, podemos adicionar mais estatísticas aqui (ex: pagamentos pendentes)
-        
         summary = {
             "total_alunos": total_alunos,
             "total_turmas": total_turmas,
-             "total_nao_pagantes": total_nao_pagantes
+            "total_inadimplentes": total_inadimplentes
         }
         return summary
     except Exception as e:

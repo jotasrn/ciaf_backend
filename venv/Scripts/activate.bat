@@ -8,7 +8,7 @@ if defined _OLD_CODEPAGE (
     "%SystemRoot%\System32\chcp.com" 65001 > nul
 )
 
-set "VIRTUAL_ENV=C:\Users\jp3p4\OneDrive\Documentos\GitHub\escolinha-futebol-api\venv"
+set "VIRTUAL_ENV=C:\Users\jp3p4\Downloads\sb1-5o7vu4n3\ciaf_backend\venv"
 
 if not defined PROMPT set PROMPT=$P$G
 

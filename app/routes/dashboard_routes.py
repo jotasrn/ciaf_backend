@@ -6,9 +6,9 @@ from app.services import dashboard_service
 
 dashboard_bp = Blueprint('dashboard_bp', __name__)
 
-@dashboard_bp.route('/summary', methods=['GET'])
+@dashboard_bp.route('/stats', methods=['GET'])
 @admin_required()
-def get_dashboard_summary():
+def get_dashboard_stats():
     """
     [ADMIN] Retorna dados resumidos para o painel principal.
     """

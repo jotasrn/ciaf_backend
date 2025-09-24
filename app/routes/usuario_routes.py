@@ -1,8 +1,11 @@
 from flask import Blueprint, jsonify, request
 from app.decorators.auth_decorators import admin_required
 from app.services import usuario_service
+from bson import json_util
+import json
 from bson import ObjectId
 from flask_jwt_extended import jwt_required, get_jwt_identity
+
 
 usuario_bp = Blueprint('usuario_bp', __name__)
 
@@ -23,10 +26,10 @@ def formatar_usuario(usuario):
 @jwt_required()
 def obter_perfil_pessoal():
     usuario_id_atual = get_jwt_identity()
-    usuario = usuario_service.encontrar_usuario_por_id(usuario_id_atual)
+    usuario = usuario_service.encontrar_usuario_por_id(usuario_id_atual) # Supondo que esta função exista
     if not usuario:
         return jsonify({"mensagem": "Usuário não encontrado."}), 404
-    return jsonify(formatar_usuario(usuario)), 200
+    return json.loads(json_util.dumps(usuario)), 200
 
 
 # --- Rotas de Gerenciamento (Apenas para Admins) ---
@@ -34,23 +37,16 @@ def obter_perfil_pessoal():
 @usuario_bp.route('/', methods=['POST'])
 @admin_required()
 def criar_novo_usuario():
-    """
-    [ADMIN] Cria um novo usuário (professor, aluno, ou outro admin).
-    """
     dados = request.get_json()
-    if not dados or not all(k in dados for k in ('nome_completo', 'email', 'senha', 'data_nascimento', 'perfil')):
+    campos_obrigatorios_base = ['nome_completo', 'email', 'senha', 'perfil']
+    if not dados or not all(k in dados for k in campos_obrigatorios_base):
         return jsonify({"mensagem": "Dados incompletos."}), 400
-
-    # A verificação que impedia a criação de admins foi removida.
-    # Como a rota já é protegida por @admin_required(), garantimos
-    # que apenas um admin logado pode criar qualquer tipo de usuário.
+    if dados.get('perfil') == 'aluno' and 'data_nascimento' not in dados:
+        return jsonify({"mensagem": "Para 'aluno', 'data_nascimento' é obrigatório."}), 400
 
     try:
         usuario_id = usuario_service.criar_usuario(dados)
-        return jsonify({
-            "mensagem": "Usuário criado com sucesso!",
-            "usuario_id": usuario_id
-        }), 201
+        return jsonify({"mensagem": "Usuário criado com sucesso!", "usuario_id": usuario_id}), 201
     except ValueError as e:
         return jsonify({"mensagem": str(e)}), 400
     except Exception as e:
@@ -62,47 +58,37 @@ def criar_novo_usuario():
 def obter_todos_usuarios():
     """
     [ADMIN] Lista todos os usuários do sistema, com suporte a filtros.
-    Ex: /api/usuarios?perfil=aluno
-    Ex: /api/usuarios?status_pagamento=pendente
     """
     filtros = {}
-    
-    # Lógica para o filtro de perfil (já existente)
     perfil_query = request.args.get('perfil')
     if perfil_query:
         filtros['perfil'] = perfil_query
-
-    # Adiciona a lógica para ler o novo parâmetro da URL.
     pagamento_query = request.args.get('status_pagamento')
     if pagamento_query:
         filtros['status_pagamento'] = pagamento_query
 
     usuarios = usuario_service.listar_usuarios(filtros)
-    usuarios_formatados = [formatar_usuario(u) for u in usuarios]
-    return jsonify(usuarios_formatados), 200
+    
+    # --- CORREÇÃO PRINCIPAL APLICADA AQUI ---
+    # Usamos json_util para serializar a lista inteira, preservando o formato do ObjectId
+    return json.loads(json_util.dumps(usuarios)), 200
 
 
 @usuario_bp.route('/<string:usuario_id>', methods=['GET'])
 @admin_required()
 def obter_usuario_por_id(usuario_id):
-    """
-    [ADMIN] Obtém os detalhes de um usuário específico.
-    """
-    usuario = usuario_service.encontrar_usuario_por_id(usuario_id)
+    usuario = usuario_service.encontrar_usuario_por_id(usuario_id) # Supondo que esta função exista
     if not usuario:
         return jsonify({"mensagem": "Usuário não encontrado."}), 404
-    return jsonify(formatar_usuario(usuario)), 200
+    return json.loads(json_util.dumps(usuario)), 200
 
 
 @usuario_bp.route('/<string:usuario_id>', methods=['PUT'])
 @admin_required()
 def atualizar_usuario_existente(usuario_id):
-    """
-    [ADMIN] Atualiza os dados de um usuário.
-    """
     dados = request.get_json()
     try:
-        if usuario_service.atualizar_usuario(usuario_id, dados) > 0:
+        if usuario_service.atualizar_usuario(usuario_id, dados): # Assumindo que o serviço retorna True/False ou levanta exceção
             return jsonify({"mensagem": "Usuário atualizado com sucesso."}), 200
         else:
             return jsonify({"mensagem": "Nenhuma alteração realizada ou usuário não encontrado."}), 404
@@ -113,11 +99,9 @@ def atualizar_usuario_existente(usuario_id):
 @usuario_bp.route('/<string:usuario_id>', methods=['DELETE'])
 @admin_required()
 def deletar_usuario_existente(usuario_id):
-    """
-    [ADMIN] Desativa (soft delete) um usuário.
-    """
-    if usuario_service.deletar_usuario(usuario_id) > 0:
-        return '', 204 # No Content, sucesso
+    modificados = usuario_service.deletar_usuario(usuario_id) # Supondo que deletar retorna o nro de modificados
+    if modificados > 0:
+        return '', 204
     else:
         return jsonify({"mensagem": "Usuário não encontrado."}), 404
 

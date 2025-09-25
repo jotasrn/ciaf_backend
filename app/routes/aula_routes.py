@@ -123,14 +123,15 @@ def get_aulas_do_dia():
     [ADMIN, PROFESSOR] Retorna as aulas de um dia específico.
     """
     data_str = request.args.get('data')
+    data_filtro = None
     
     if data_str:
         try:
-            data_filtro = datetime.datetime.fromisoformat(data_str)
+            data_filtro = datetime.strptime(data_str, '%Y-%m-%d')
         except ValueError:
             return jsonify({"mensagem": "Formato de data inválido. Use AAAA-MM-DD."}), 400
     else:
-        data_filtro = datetime.datetime.now(timezone)
+        data_filtro = datetime.now()
 
     aulas = aula_service.listar_aulas_por_data(data_filtro)
     return json.loads(json_util.dumps(aulas)), 200

@@ -4,6 +4,7 @@ from datetime import datetime, time, timedelta
 import calendar
 from pymongo import UpdateOne
 from flask import current_app
+from datetime import datetime, time
 
 # Funções relacionadas à criação e agendamento de aulas
 def criar_aula(dados_aula):
@@ -248,3 +249,50 @@ def marcar_presenca_lote(aula_id, lista_presencas):
     )
     
     return resultado.upserted_count + resultado.modified_count
+
+def listar_historico_aulas(data_filtro=None, nome_turma_filtro=None):
+    """
+    Busca um histórico de aulas já realizadas, com filtros.
+    """
+    pipeline = []
+
+    match_stage = {"status": "realizada"}
+
+    if data_filtro:
+        inicio_dia = datetime.combine(data_filtro.date(), time.min)
+        fim_dia = datetime.combine(data_filtro.date(), time.max)
+        match_stage['data'] = {"$gte": inicio_dia, "$lte": fim_dia}
+    
+    pipeline.append({"$match": match_stage})
+
+    pipeline.extend([
+        {"$lookup": {"from": "turmas", "localField": "turma_id", "foreignField": "_id", "as": "turma"}},
+        {"$unwind": "$turma"},
+    ])
+
+    if nome_turma_filtro:
+        pipeline.append({"$match": {"turma.nome": {"$regex": nome_turma_filtro, "$options": "i"}}})
+
+    pipeline.extend([
+        {"$lookup": {"from": "esportes", "localField": "turma.esporte_id", "foreignField": "_id", "as": "esporte"}},
+        {"$unwind": "$esporte"},
+        {"$lookup": {"from": "presencas", "localField": "_id", "foreignField": "aula_id", "as": "presencas"}},
+        {
+            "$project": {
+                "data": 1, "status": 1,
+                "turma_nome": "$turma.nome",
+                "esporte_nome": "$esporte.nome",
+                "total_alunos_na_turma": {"$size": "$turma.alunos_ids"},
+                "total_presentes": {
+                    "$size": {
+                        "$filter": {
+                            "input": "$presencas", "as": "p", "cond": {"$eq": ["$$p.status", "presente"]}
+                        }
+                    }
+                }
+            }
+        },
+        {"$sort": {"data": -1}} 
+    ])
+
+    return list(mongo.db.aulas.aggregate(pipeline))

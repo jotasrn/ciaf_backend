@@ -4,11 +4,11 @@ from app.services import aula_service, export_service
 from app import mongo, timezone
 from bson import ObjectId, json_util
 from flask_jwt_extended import get_jwt_identity, get_jwt
-import datetime
 import json
 from flask import Blueprint, request, jsonify
 import traceback
 from flask_jwt_extended import get_jwt
+from datetime import datetime
 
 
 # Garante que o Blueprint está definido corretamente
@@ -186,3 +186,23 @@ def agendar_novas_aulas(turma_id):
         traceback.print_exc() # Imprime o traceback completo
         print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
         return jsonify({"mensagem": "Erro interno ao agendar aulas.", "detalhes": str(e)}), 500
+
+@aula_bp.route('/historico', methods=['GET'])
+@admin_required()
+def get_historico_aulas():
+    """
+    [ADMIN] Retorna o histórico de aulas realizadas.
+    """
+    data_str = request.args.get('data')
+    nome_turma = request.args.get('turma')
+    
+    data_filtro = None
+    if data_str:
+        try:
+            # Esta linha agora funciona por causa da importação corrigida
+            data_filtro = datetime.strptime(data_str, '%Y-%m-%d')
+        except ValueError:
+            return jsonify({"mensagem": "Formato de data inválido. Use AAAA-MM-DD."}), 400
+
+    aulas = aula_service.listar_historico_aulas(data_filtro, nome_turma)
+    return json.loads(json_util.dumps(aulas)), 200

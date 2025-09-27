@@ -40,56 +40,56 @@ def _converter_para_objectid(id_string, nome_campo):
 def _validar_dados_turma(dados):
     """Valida a estrutura e os tipos de dados para criar/atualizar uma turma."""
     campos_obrigatorios = ['nome', 'esporte_id', 'categoria', 'professor_id', 'alunos_ids', 'horarios']
-    _validar_campos_obrigatorios(dados, campos_obrigatorios)
+    # ... (sua função _validar_campos_obrigatorios) ...
 
-    if not isinstance(dados.get('horarios'), list) or not all(isinstance(h, dict) for h in dados.get('horarios', [])):
-        raise ValueError("O campo 'horarios' deve ser uma lista de objetos (dicionários).")
+    if not isinstance(dados.get('horarios'), list):
+        raise ValueError("O campo 'horarios' deve ser uma lista.")
 
     for horario in dados.get('horarios', []):
-        # Para cada horário, 'dia_semana' é o único campo estritamente obrigatório
-        _validar_campos_obrigatorios(horario, ['dia_semana'])
-
+        if not isinstance(horario, dict):
+             raise ValueError("Cada horário deve ser um objeto (dicionário).")
+        # Valida apenas os campos essenciais para cada horário
+        _validar_campos_obrigatorios(horario, ['dia_semana', 'hora_inicio'])
 
 def _preparar_documento_turma(dados):
     """Prepara o dicionário de dados para inserção ou atualização no MongoDB."""
+    
+    categoria_id_str = dados.get('categoria')
+    categoria_obj = mongo.db.categorias.find_one({"_id": ObjectId(categoria_id_str)})
+    if not categoria_obj:
+        raise ValueError("Categoria não encontrada para o ID fornecido.")
+
+    # Garante que estamos salvando 'professor_id' como um campo de topo.
     documento = {
         'nome': dados['nome'],
-        'categoria': dados['categoria'],
-        'horarios': dados['horarios'],
-        'esporte_id': _converter_para_objectid(dados['esporte_id'], 'esporte_id'),
-        'professor_id': _converter_para_objectid(dados['professor_id'], 'professor_id'),
-        'alunos_ids': [_converter_para_objectid(aluno_id, 'aluno_id') for aluno_id in dados.get('alunos_ids', [])]
+        'categoria': categoria_obj['nome'],
+        'horarios': dados.get('horarios', []),
+        'esporte_id': ObjectId(dados['esporte_id']),
+        'professor_id': ObjectId(dados['professor_id']), # Formato correto
+        'alunos_ids': [ObjectId(aluno_id) for aluno_id in dados.get('alunos_ids', [])]
     }
     return documento
 
-# --- Lógica de Negócio ---
-
 def criar_turma(dados):
+    """Cria uma nova turma usando o documento padronizado."""
     try:
-        _validar_dados_turma(dados)
+        # A validação e preparação agora usam a função corrigida
         dados_turma_para_inserir = _preparar_documento_turma(dados)
-        resultado = mongo.db.turmas.insert_one(dados_turma_para_inserir)
-        nova_turma_id = resultado.inserted_id
-        current_app.logger.info(f"Turma '{dados['nome']}' criada com sucesso. ID: {nova_turma_id}")
-
-        # Vinculações
-        professor_id = str(dados_turma_para_inserir['professor_id'])
-        alunos_ids = [str(aluno_id) for aluno_id in dados_turma_para_inserir['alunos_ids']]
-        _vincular_professor_a_turmas(professor_id, [str(nova_turma_id)])
-        _vincular_alunos_a_turma(alunos_ids, str(nova_turma_id))
         
-        # ✅ LÓGICA AUTOMÁTICA ADICIONADA
-        # Gera as aulas para o mês corrente assim que a turma é criada.
-        aula_service.agendar_aulas_do_mes(str(nova_turma_id))
-
-        return str(nova_turma_id)
+        resultado = mongo.db.turmas.insert_one(dados_turma_para_inserir)
+        nova_turma_id = str(resultado.inserted_id)
+        current_app.logger.info(f"Turma '{dados['nome']}' criada com sucesso. ID: {nova_turma_id}")
+        
+        # Agenda aulas para o mês corrente automaticamente
+        aula_service.agendar_aulas_para_turma(nova_turma_id)
+        
+        return nova_turma_id
+    except ValueError as ve:
+        current_app.logger.error(f"Erro de validação ao criar turma: {ve}")
+        raise ve
     except Exception as e:
-        current_app.logger.error(f"!!!!!!!!!! ERRO AO CRIAR TURMA !!!!!!!!!!\n{e}\n!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
-        raise e
-    except Exception as e:
-        current_app.logger.error(f"!!!!!!!!!! ERRO INESPERADO AO CRIAR TURMA !!!!!!!!!!\n{e}\n!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
+        current_app.logger.error(f"Erro inesperado ao criar turma: {e}")
         raise Exception(f"Ocorreu um erro inesperado: {e}")
-
 
 def listar_turmas():
     """Lista todas as turmas com informações agregadas de esporte, professor e alunos."""

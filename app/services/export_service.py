@@ -101,24 +101,20 @@ def gerar_pdf_presenca_aula(aula_id):
     """
     Gera um relatório PDF da lista de presença de uma aula.
     """
-    # 1. Usa a mesma função de busca de dados robusta
     dados_aula = aula_service.buscar_detalhes_aula(aula_id)
     if not dados_aula:
         return None, None
         
-    # 2. Renderiza o template HTML (ele já espera os dados completos)
     html_renderizado = render_template(
         'relatorios/relatorio_presenca.html',
         dados=dados_aula,
         data_geracao=datetime.datetime.now()
     )
 
-    # 3. Converte para PDF
     pdf_bytes = HTML(string=html_renderizado).write_pdf()
     file_stream = io.BytesIO(pdf_bytes)
 
-    # 4. Gera o nome do arquivo
-    nome_turma_safe = "".join(c for c in dados_aula.get('turma_nome', 'Turma') if c.isalnum() or c in (' ', '-')).rstrip()
+    nome_turma_safe = "".join(c for c in dados_aula.get('turma_nome', 'Turma') if c.isalnum()).rstrip()
     data_safe = dados_aula.get('data').strftime('%Y-%m-%d') if dados_aula.get('data') else ''
     nome_arquivo = f"Presenca_{nome_turma_safe}_{data_safe}.pdf"
 

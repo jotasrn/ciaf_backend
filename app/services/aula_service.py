@@ -272,16 +272,19 @@ def buscar_detalhes_aula(aula_id):
         }
     ]
     resultado = list(mongo.db.aulas.aggregate(pipeline))
+    
     return resultado[0] if resultado else None
 def listar_historico_aulas(data_filtro=None, nome_turma=None):
     """
     Busca no banco de dados um histórico de aulas com base nos filtros.
-    Esta função agora está no lugar correto.
+    Se nenhum filtro for fornecido, retorna apenas as aulas já realizadas.
     """
     pipeline = []
-    
-    # Inicia a busca com um filtro base
     match_stage = {}
+
+    if not data_filtro and not nome_turma:
+        match_stage['status'] = 'Realizada'
+    
     if data_filtro:
         inicio_dia = timezone.localize(datetime.combine(data_filtro.date(), time.min))
         fim_dia = timezone.localize(datetime.combine(data_filtro.date(), time.max))
@@ -298,18 +301,15 @@ def listar_historico_aulas(data_filtro=None, nome_turma=None):
 
     if nome_turma:
         pipeline.append({
-            "$match": {
-                "turma_info.nome": {"$regex": nome_turma, "$options": "i"}
-            }
+            "$match": {"turma_info.nome": {"$regex": nome_turma, "$options": "i"}}
         })
         
+    # Adiciona junção com presenças e projeta os dados finais
     pipeline.extend([
         {"$lookup": {"from": "presencas", "localField": "_id", "foreignField": "aula_id", "as": "presencas"}},
         {
             "$project": {
-                "_id": 1,
-                "data": "$data",
-                "status": "$status",
+                "_id": 1, "data": 1, "status": 1,
                 "turmaNome": "$turma_info.nome",
                 "esporteNome": "$turma_info.esporte.nome",
                 "totalAlunosNaTurma": {"$size": "$turma_info.alunos_ids"},

@@ -84,6 +84,35 @@ def _verificar_permissao_professor(turma_id):
     print("--- FIM DA VERIFICAÇÃO ---")
     return permissao_concedida
 
+
+@aula_bp.route('/<string:aula_id>/presencas', methods=['POST'])
+@role_required(roles=['admin', 'professor'])
+def registrar_presencas(aula_id):
+    aula = mongo.db.aulas.find_one({"_id": ObjectId(aula_id)})
+    if not aula:
+        return jsonify({"mensagem": "Aula não encontrada."}), 404
+
+    claims = get_jwt()
+    user_role = claims.get("perfil")
+
+    if aula.get('status', '').lower() == 'realizada' and user_role != 'admin':
+        return jsonify({"mensagem": "Esta chamada já foi finalizada."}), 403
+
+    # A verificação de segurança agora nos dará logs detalhados
+    if not _verificar_permissao_professor(str(aula.get('turma_id'))):
+        return jsonify({"mensagem": "Acesso negado: você não é o professor desta turma."}), 403 
+
+    lista_presencas = request.get_json()
+    if not isinstance(lista_presencas, list):
+        return jsonify({"mensagem": "O corpo da requisição deve ser uma lista."}), 400
+
+    try:
+        total_modificado = aula_service.marcar_presenca_lote(aula_id, lista_presencas)
+        return jsonify({"mensagem": f"Presença registrada para {total_modificado} aluno(s).", "aula_status": "Realizada"}), 200
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"mensagem": "Erro interno ao registrar presença.", "detalhes": str(e)}), 500
+
 @aula_bp.route('/', methods=['POST'])
 @role_required(roles=['admin', 'professor'])
 def agendar_aula():
@@ -123,35 +152,6 @@ def get_detalhes_aula(aula_id):
     detalhes = aula_service.buscar_detalhes_aula(aula_id)
     return json.loads(json_util.dumps(detalhes)), 200
 
-
-@aula_bp.route('/<string:aula_id>/presencas', methods=['POST'])
-@role_required(roles=['admin', 'professor'])
-def registrar_presencas(aula_id):
-    aula = mongo.db.aulas.find_one({"_id": ObjectId(aula_id)})
-    if not aula:
-        return jsonify({"mensagem": "Aula não encontrada."}), 404
-
-    claims = get_jwt()
-    user_role = claims.get("perfil")
-
-    if aula.get('status', '').lower() == 'realizada' and user_role != 'admin':
-        return jsonify({"mensagem": "Esta chamada já foi finalizada."}), 403
-
-    # A verificação de segurança agora nos dará logs detalhados
-    if not _verificar_permissao_professor(str(aula.get('turma_id'))):
-        return jsonify({"mensagem": "Acesso negado: você não é o professor desta turma."}), 403 
-
-    lista_presencas = request.get_json()
-    if not isinstance(lista_presencas, list):
-        return jsonify({"mensagem": "O corpo da requisição deve ser uma lista."}), 400
-
-    try:
-        total_modificado = aula_service.marcar_presenca_lote(aula_id, lista_presencas)
-        return jsonify({"mensagem": f"Presença registrada para {total_modificado} aluno(s).", "aula_status": "Realizada"}), 200
-    except Exception as e:
-        traceback.print_exc()
-        return jsonify({"mensagem": "Erro interno ao registrar presença.", "detalhes": str(e)}), 500
-
 @aula_bp.route('/por-data', methods=['GET'])
 @role_required(roles=['admin', 'professor'])
 def get_aulas_do_dia():
@@ -171,7 +171,6 @@ def get_aulas_do_dia():
 
     aulas = aula_service.listar_aulas_por_data(data_filtro)
     return json.loads(json_util.dumps(aulas)), 200
-
 
 @aula_bp.route('/<string:aula_id>/exportar', methods=['GET'])
 @role_required(roles=['admin', 'professor'])

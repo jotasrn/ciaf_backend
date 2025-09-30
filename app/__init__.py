@@ -1,37 +1,44 @@
-# app/__init__.py 
 import os
 import re
 import pytz
-from flask import Flask
+from flask import Flask, request, make_response
 from flask_pymongo import PyMongo
 from flask_cors import CORS
 from flask_jwt_extended import JWTManager
 from dotenv import load_dotenv
 
-# Carrega variáveis do .env
+# Carrega variáveis do .env logo no início
 load_dotenv()
 
 mongo = PyMongo()
 jwt = JWTManager()
-timezone = None
+timezone = None  # será configurado dentro de criar_app
+
 
 def criar_app():
     app = Flask(__name__)
 
     # Configurações do app a partir do .env
     app.config["MONGO_URI"] = os.getenv("MONGO_URI")
+    # Tenta pegar JWT_SECRET_KEY primeiro, senão usa SECRET_KEY
     app.config["JWT_SECRET_KEY"] = os.getenv("JWT_SECRET_KEY") or os.getenv("SECRET_KEY")
     app.config["TIMEZONE"] = os.getenv("TIMEZONE", "America/Sao_Paulo")
 
     if not app.config["MONGO_URI"] or not app.config["JWT_SECRET_KEY"]:
-        raise ValueError("MONGO_URI e JWT_SECRET_KEY devem ser definidos no arquivo .env")
+        raise ValueError("MONGO_URI e JWT_SECRET_KEY (ou SECRET_KEY) devem ser definidos no arquivo .env")
 
-    # Configuração do CORS (já estava correta, mas mantemos a versão robusta)
+    # Configuração do CORS
     origins = [
-        "https://ciaf-gestao.netlify.app",
-        re.compile(r"http://localhost:.*")
+        re.compile(r"http://localhost:\d+"),   # qualquer porta do localhost (dev)
+        "https://ciaf-gestao.netlify.app"      # seu frontend hospedado no Netlify
     ]
-    CORS(app, resources={r"/api/*": {"origins": origins}}, supports_credentials=True)
+    CORS(
+        app,
+        resources={r"/api/*": {"origins": origins}},
+        supports_credentials=True,
+        methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+        allow_headers=["Content-Type", "Authorization"]
+    )
 
     # Inicializa extensões
     mongo.init_app(app)
@@ -41,11 +48,19 @@ def criar_app():
     global timezone
     timezone = pytz.timezone(app.config["TIMEZONE"])
 
-    # A função manual para tratar OPTIONS foi REMOVIDA para evitar conflitos com Flask-CORS.
+    # Trata pré-flight requests (CORS OPTIONS)
+    @app.before_request
+    def handle_preflight_requests():
+        if request.method.upper() == "OPTIONS":
+            response = make_response("", 200)
+            response.headers["Access-Control-Allow-Origin"] = request.headers.get("Origin", "*")
+            response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
+            response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
+            response.headers["Access-Control-Allow-Credentials"] = "true"
+            return response
 
     # Registra rotas
     with app.app_context():
-        # --- CORREÇÃO APLICADA AQUI: Importando os blueprints ---
         from .routes.health_check import health_check_bp
         from .routes.auth_routes import auth_bp
         from .routes.usuario_routes import usuario_bp

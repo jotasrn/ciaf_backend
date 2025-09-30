@@ -61,7 +61,6 @@ def criar_usuario(dados_usuario):
         "data_criacao": datetime.datetime.utcnow(),
     }
 
-    # --- CORREÇÃO E MELHORIA APLICADA AQUI ---
     if novo_usuario['perfil'] == 'aluno':
         if 'data_nascimento' in dados_usuario and dados_usuario['data_nascimento']:
             novo_usuario['data_nascimento'] = datetime.datetime.fromisoformat(dados_usuario['data_nascimento'])

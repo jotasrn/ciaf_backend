@@ -1,42 +1,43 @@
 import os
 import re
 import pytz
-from flask import Flask
+from flask import Flask, request
 from flask_pymongo import PyMongo
 from flask_cors import CORS
 from flask_jwt_extended import JWTManager
 from dotenv import load_dotenv
 
-# Carrega variáveis do .env
+# Carrega variáveis do .env logo no início
 load_dotenv()
 
 mongo = PyMongo()
 jwt = JWTManager()
-timezone = None
+timezone = None  # será configurado dentro de criar_app
+
 
 def criar_app():
     app = Flask(__name__)
 
-    # Configurações do app
+    # Configurações do app a partir do .env
     app.config["MONGO_URI"] = os.getenv("MONGO_URI")
+    # Tenta pegar JWT_SECRET_KEY primeiro, senão usa SECRET_KEY
     app.config["JWT_SECRET_KEY"] = os.getenv("JWT_SECRET_KEY") or os.getenv("SECRET_KEY")
     app.config["TIMEZONE"] = os.getenv("TIMEZONE", "America/Sao_Paulo")
 
     if not app.config["MONGO_URI"] or not app.config["JWT_SECRET_KEY"]:
-        raise ValueError("MONGO_URI e JWT_SECRET_KEY devem ser definidos no arquivo .env")
+        raise ValueError("MONGO_URI e JWT_SECRET_KEY (ou SECRET_KEY) devem ser definidos no arquivo .env")
 
-    # --- CORREÇÃO DEFINITIVA DE CORS ---
-    # Define as origens permitidas
+    # Configuração do CORS
     origins = [
-        "https://ciaf-gestao.netlify.app",  # Sua URL de produção
-        r"http://localhost:.*"              # Regex para qualquer porta localhost em desenvolvimento
+        re.compile(r"http://localhost:\d+"),   # qualquer porta do localhost (dev)
+        "https://ciaf-gestao.netlify.app"      # seu frontend hospedado no Netlify
     ]
-    
-    # Aplica a configuração de CORS à aplicação
     CORS(
         app,
         resources={r"/api/*": {"origins": origins}},
-        supports_credentials=True
+        supports_credentials=True,
+        methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+        allow_headers=["Content-Type", "Authorization"]  # garante que OPTIONS aceite headers JWT
     )
 
     # Inicializa extensões
@@ -46,6 +47,12 @@ def criar_app():
     # Configura timezone global
     global timezone
     timezone = pytz.timezone(app.config["TIMEZONE"])
+
+    # Trata pré-flight requests (CORS OPTIONS)
+    @app.before_request
+    def handle_preflight_requests():
+        if request.method.upper() == "OPTIONS":
+            return app.make_response((""), 200)
 
     # Registra rotas
     with app.app_context():

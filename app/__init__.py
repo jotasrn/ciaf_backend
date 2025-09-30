@@ -1,4 +1,3 @@
-# app/__init__.py 
 import os
 import re
 import pytz
@@ -26,13 +25,14 @@ def criar_app():
     if not app.config["MONGO_URI"] or not app.config["JWT_SECRET_KEY"]:
         raise ValueError("MONGO_URI e JWT_SECRET_KEY devem ser definidos no arquivo .env")
 
-    # --- CORREÇÃO PRINCIPAL: Configuração de CORS simplificada ---
-    # Apenas a configuração da extensão Flask-CORS é necessária.
-    # Ela lida com as requisições OPTIONS automaticamente.
+    # --- CORREÇÃO DEFINITIVA DE CORS ---
+    # Define as origens permitidas
     origins = [
-        "http://localhost:5173", # Para desenvolvimento local
-        "https://ciaf-gestao.netlify.app"  # Para produção
+        "https://ciaf-gestao.netlify.app",  # Sua URL de produção
+        r"http://localhost:.*"              # Regex para qualquer porta localhost em desenvolvimento
     ]
+    
+    # Aplica a configuração de CORS à aplicação
     CORS(
         app,
         resources={r"/api/*": {"origins": origins}},
@@ -47,17 +47,19 @@ def criar_app():
     global timezone
     timezone = pytz.timezone(app.config["TIMEZONE"])
 
-    # A função @app.before_request para OPTIONS foi REMOVIDA daqui.
-
     # Registra rotas
     with app.app_context():
-        from .routes import (
-            health_check, auth_routes, usuario_routes, esporte_routes,
-            turma_routes, aula_routes, dashboard_routes, categoria_routes,
-            presenca_routes
-        )
+        from .routes.health_check import health_check_bp
+        from .routes.auth_routes import auth_bp
+        from .routes.usuario_routes import usuario_bp
+        from .routes.esporte_routes import esporte_bp
+        from .routes.turma_routes import turma_bp
+        from .routes.aula_routes import aula_bp
+        from .routes.dashboard_routes import dashboard_bp
+        from .routes.categoria_routes import categoria_bp
+        from .routes.presenca_routes import presenca_bp
 
-        app.register_blueprint(health_check.health_check_bp, url_prefix="/api")
+        app.register_blueprint(health_check_bp, url_prefix="/api")
         app.register_blueprint(auth_bp, url_prefix="/api/auth")
         app.register_blueprint(usuario_bp, url_prefix="/api/usuarios")
         app.register_blueprint(esporte_bp, url_prefix="/api/esportes")
